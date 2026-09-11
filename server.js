@@ -122,13 +122,20 @@ io.on('connection', (socket) => {
     io.to(currentRoomId).emit('chat-message', { id: socket.id, name: p.name, color: p.color, text: clean });
   });
 
+  // Permet à chaque client d'estimer l'écart entre son horloge et celle du
+  // serveur, pour que le "top départ" des vidéos soit fiable même si l'heure
+  // système d'un appareil est décalée.
+  socket.on('time-sync', (_, callback) => {
+    if (typeof callback === 'function') callback(Date.now());
+  });
+
   // Un joueur colle un lien YouTube : le serveur donne un "top départ" commun
   // (quelques secondes dans le futur) pour que chaque lecteur démarre en même temps.
   socket.on('play-video', ({ videoId, title }) => {
     if (!currentRoomId || !videoId) return;
     const room = rooms.get(currentRoomId);
     if (!room) return;
-    const startAt = Date.now() + 3000; // 3 secondes de marge
+    const startAt = Date.now() + 6000; // 6 secondes de marge (laisse le temps au lecteur YouTube de s'initialiser chez tout le monde)
     room.currentVideo = { videoId, title: String(title || '').slice(0, 100), startAt };
     io.to(currentRoomId).emit('play-video', room.currentVideo);
   });
