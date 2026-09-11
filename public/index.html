@@ -34,9 +34,7 @@
   #status { font-size: 12px; margin-top: 6px; }
   #status.ok { color: #7ee08a; }
   #status.off { color: #ff8a8a; }
-  #invite-row {
-    display: flex; gap: 6px; margin-top: 8px;
-  }
+  #invite-row { display: flex; gap: 6px; margin-top: 8px; }
   #invite-link {
     flex: 1; background: #1d1829; border: 1px solid var(--line);
     color: var(--text); border-radius: 6px; padding: 6px 8px; font-size: 11px;
@@ -46,7 +44,7 @@
     font-weight: 600; font-size: 11px; border-radius: 6px; padding: 0 10px; cursor: pointer;
   }
 
-  #spotify-box {
+  #youtube-box {
     position: fixed; right: 16px; top: 16px; z-index: 20;
     background: rgba(20, 16, 28, 0.9);
     border: 1px solid var(--line);
@@ -54,61 +52,43 @@
     padding: 14px 16px;
     width: 280px;
   }
-  #spotify-box h2 { font-size: 13px; font-weight: 500; margin: 0 0 8px; }
-  #spotify-connect-btn {
-    background: #1ed760; border: none; color: #06170c;
-    font-weight: 600; font-size: 12px; border-radius: 20px; padding: 8px 14px; cursor: pointer;
-    width: 100%;
-  }
-  #spotify-search-row { display: flex; gap: 6px; margin-top: 4px; }
-  #spotify-search-input {
+  #youtube-box h2 { font-size: 13px; font-weight: 500; margin: 0 0 8px; }
+  #youtube-row { display: flex; gap: 6px; }
+  #youtube-input {
     flex: 1; background: #1d1829; border: 1px solid var(--line);
     color: var(--text); border-radius: 6px; padding: 6px 8px; font-size: 12px;
   }
-  #spotify-results {
-    margin-top: 8px; max-height: 220px; overflow-y: auto;
-    display: flex; flex-direction: column; gap: 6px;
+  #youtube-launch-btn {
+    background: #ff0033; border: none; color: #fff;
+    font-weight: 600; font-size: 12px; border-radius: 6px; padding: 0 12px; cursor: pointer;
   }
-  .track-item {
-    display: flex; align-items: center; gap: 8px;
-    background: #1d1829; border-radius: 6px; padding: 6px;
-    font-size: 11px; cursor: pointer;
+  #youtube-now-playing {
+    margin-top: 8px; font-size: 11px; color: var(--muted);
   }
-  .track-item:hover { background: #251f34; }
-  .track-item img { width: 32px; height: 32px; border-radius: 4px; }
-  .track-item .info { flex: 1; overflow: hidden; }
-  .track-item .title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .track-item .artist { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #youtube-player-wrap {
+    margin-top: 8px; width: 100%; aspect-ratio: 16/9;
+    border-radius: 8px; overflow: hidden; background: #000;
+  }
 
   #controls {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
     z-index: 20;
-    display: flex;
-    gap: 8px;
+    display: flex; gap: 8px;
   }
   .btn {
-    background: #1d1829;
-    border: 1px solid var(--line);
-    color: var(--text);
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 12px;
-    cursor: pointer;
+    background: #1d1829; border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer;
   }
   .btn.active { background: var(--accent); color: #2a0b18; font-weight: 600; border-color: var(--accent); }
 
   #chat-wrap {
     position: fixed; right: 16px; bottom: 16px; z-index: 20;
-    width: 260px;
-    display: flex; flex-direction: column; gap: 6px;
+    width: 260px; display: flex; flex-direction: column; gap: 6px;
   }
   #chat-log {
     max-height: 160px; overflow-y: auto;
-    background: rgba(20,16,28,0.85);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 8px;
-    font-size: 12px;
+    background: rgba(20,16,28,0.85); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px; font-size: 12px;
   }
   #chat-log div { margin-bottom: 4px; }
   #chat-row { display: flex; gap: 6px; }
@@ -135,13 +115,14 @@
 
 <div id="controls"></div>
 
-<div id="spotify-box">
-  <h2>Musique (Spotify)</h2>
-  <button id="spotify-connect-btn">Se connecter à Spotify</button>
-  <div id="spotify-search-row" style="display:none;">
-    <input id="spotify-search-input" placeholder="Chercher un morceau...">
+<div id="youtube-box">
+  <h2>Musique (YouTube)</h2>
+  <div id="youtube-row">
+    <input id="youtube-input" placeholder="Colle un lien YouTube...">
+    <button id="youtube-launch-btn">Lancer</button>
   </div>
-  <div id="spotify-results"></div>
+  <div id="youtube-now-playing">Aucune vidéo en cours.</div>
+  <div id="youtube-player-wrap"><div id="youtube-player"></div></div>
 </div>
 
 <div id="chat-wrap">
@@ -165,166 +146,38 @@ const statusEl = document.getElementById('status');
 const socket = io();
 
 let selfId = null;
-let players = {}; // id -> { name, x, y, pose, accessory, color }
+let players = {};
 
-// lit le code de salle depuis l'URL (?room=xxxx), ou laisse vide pour en obtenir une nouvelle
 const urlParams = new URLSearchParams(window.location.search);
 const requestedRoom = urlParams.get('room') || '';
 
-socket.on('connect', () => {
-  socket.emit('join-room', requestedRoom);
+socket.on('connect', () => { socket.emit('join-room', requestedRoom); });
+socket.on('disconnect', () => { statusEl.textContent = 'Déconnecté'; statusEl.className = 'off'; });
+
+socket.on('room-state', (state) => {
+  selfId = state.selfId;
+  players = state.players;
+
+  statusEl.textContent = 'Connecté — salle ' + state.roomId;
+  statusEl.className = 'ok';
+
+  const inviteUrl = window.location.origin + window.location.pathname + '?room=' + state.roomId;
+  window.history.replaceState({}, '', inviteUrl);
+  document.getElementById('invite-link').value = inviteUrl;
+
+  if (state.currentVideo) {
+    document.getElementById('youtube-now-playing').textContent = 'En cours : ' + (state.currentVideo.title || state.currentVideo.videoId);
+    scheduleYoutubePlayback(state.currentVideo);
+  }
 });
-socket.on('disconnect', () => {
-  statusEl.textContent = 'Déconnecté';
-  statusEl.className = 'off';
-});
+socket.on('player-joined', ({ id, player }) => { players[id] = player; });
+socket.on('player-left', ({ id }) => { delete players[id]; });
+socket.on('player-moved', ({ id, x, y }) => { if (players[id]) { players[id].x = x; players[id].y = y; } });
+socket.on('player-posed', ({ id, pose }) => { if (players[id]) players[id].pose = pose; });
+socket.on('player-accessory', ({ id, accessory }) => { if (players[id]) players[id].accessory = accessory; });
 
 const poses = ['idle', 'hands_up', 'jump', 'clap'];
 const poseLabels = { idle: 'Repos', hands_up: 'Mains en l\u2019air', jump: 'Saute', clap: 'Applaudit' };
-
-document.getElementById('copy-btn').addEventListener('click', () => {
-  const input = document.getElementById('invite-link');
-  input.select();
-  navigator.clipboard.writeText(input.value).catch(() => {});
-});
-
-// --- Connexion Spotify ---
-const spotifyConnectBtn = document.getElementById('spotify-connect-btn');
-const spotifySearchRow = document.getElementById('spotify-search-row');
-const spotifySearchInput = document.getElementById('spotify-search-input');
-const spotifyResults = document.getElementById('spotify-results');
-
-function currentRoomForLogin() {
-  return requestedRoom || (new URLSearchParams(window.location.search).get('room')) || '';
-}
-
-async function refreshSpotifyStatus() {
-  try {
-    const res = await fetch('/api/spotify/status');
-    const data = await res.json();
-    if (data.connected) {
-      spotifyConnectBtn.textContent = 'Connecté à Spotify';
-      spotifyConnectBtn.disabled = true;
-      spotifyConnectBtn.style.opacity = '0.7';
-      spotifySearchRow.style.display = 'flex';
-      initSpotifyPlayer();
-    }
-  } catch (e) { /* ignore */ }
-}
-refreshSpotifyStatus();
-
-spotifyConnectBtn.addEventListener('click', () => {
-  const room = currentRoomForLogin();
-  window.location.href = '/login' + (room ? '?room=' + encodeURIComponent(room) : '');
-});
-
-let searchTimeout = null;
-spotifySearchInput.addEventListener('input', () => {
-  clearTimeout(searchTimeout);
-  const q = spotifySearchInput.value.trim();
-  if (!q) { spotifyResults.innerHTML = ''; return; }
-  searchTimeout = setTimeout(() => runSpotifySearch(q), 350);
-});
-
-async function runSpotifySearch(q) {
-  try {
-    const res = await fetch('/api/spotify/search?q=' + encodeURIComponent(q));
-    if (res.status === 401) {
-      spotifyResults.innerHTML = '<div style="color:var(--muted); font-size:11px;">Connecte-toi à Spotify pour chercher.</div>';
-      return;
-    }
-    const data = await res.json();
-    renderResults(data.tracks || []);
-  } catch (e) {
-    spotifyResults.innerHTML = '<div style="color:var(--muted); font-size:11px;">Erreur de recherche.</div>';
-  }
-}
-
-function renderResults(tracks) {
-  spotifyResults.innerHTML = '';
-  tracks.forEach(t => {
-    const el = document.createElement('div');
-    el.className = 'track-item';
-    el.innerHTML = `
-      ${t.image ? `<img src="${t.image.url}" alt="">` : ''}
-      <div class="info">
-        <div class="title">${escapeHtml(t.name)}</div>
-        <div class="artist">${escapeHtml(t.artist)}</div>
-      </div>
-    `;
-    el.addEventListener('click', () => {
-      // Envoie le morceau choisi au serveur, qui donnera un top départ à tout le monde.
-      // On annonce aussi dans le chat pour que ce soit visible même sans Spotify connecté.
-      socket.emit('play-track', { uri: t.uri, name: t.name, artist: t.artist });
-      socket.emit('chat', '🎵 a lancé : ' + t.name + ' — ' + t.artist);
-    });
-    spotifyResults.appendChild(el);
-  });
-}
-
-// --- Lecteur Spotify intégré (Web Playback SDK) ---
-let spotifyPlayer = null;
-let spotifyDeviceId = null;
-let spotifyPlayerReady = false;
-
-function initSpotifyPlayer() {
-  if (window.Spotify) {
-    createSpotifyPlayer();
-    return;
-  }
-  window.onSpotifyWebPlaybackSDKReady = createSpotifyPlayer;
-  const script = document.createElement('script');
-  script.src = 'https://sdk.scdn.co/spotify-player.js';
-  document.head.appendChild(script);
-}
-
-function createSpotifyPlayer() {
-  spotifyPlayer = new Spotify.Player({
-    name: 'Jeu musical — ' + (requestedRoom || 'salle'),
-    getOAuthToken: async (callback) => {
-      const res = await fetch('/api/spotify/sdk-token');
-      const data = await res.json();
-      callback(data.access_token);
-    },
-    volume: 0.7
-  });
-
-  spotifyPlayer.addListener('ready', ({ device_id }) => {
-    spotifyDeviceId = device_id;
-    spotifyPlayerReady = true;
-  });
-  spotifyPlayer.addListener('not_ready', () => { spotifyPlayerReady = false; });
-  spotifyPlayer.addListener('initialization_error', ({ message }) => console.error('Spotify init error:', message));
-  spotifyPlayer.addListener('authentication_error', ({ message }) => console.error('Spotify auth error:', message));
-  spotifyPlayer.addListener('account_error', ({ message }) => console.error('Spotify account error (Premium requis):', message));
-
-  spotifyPlayer.connect();
-}
-
-// Reçoit le "top départ" d'un morceau choisi par n'importe qui dans la salle
-socket.on('play-track', ({ uri, startAt }) => {
-  const delay = Math.max(0, startAt - Date.now());
-  setTimeout(() => startPlaybackOnThisDevice(uri), delay);
-});
-
-async function startPlaybackOnThisDevice(uri) {
-  if (!spotifyPlayerReady || !spotifyDeviceId) return; // ce joueur n'a pas (encore) de lecteur prêt
-  try {
-    const tokenRes = await fetch('/api/spotify/sdk-token');
-    const { access_token } = await tokenRes.json();
-    await fetch('https://api.spotify.com/v1/me/player/play?device_id=' + spotifyDeviceId, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + access_token
-      },
-      body: JSON.stringify({ uris: [uri] })
-    });
-  } catch (e) {
-    console.error('Erreur de lecture Spotify:', e);
-  }
-}
-
 const controls = document.getElementById('controls');
 poses.forEach(p => {
   const btn = document.createElement('div');
@@ -338,43 +191,16 @@ poses.forEach(p => {
   controls.appendChild(btn);
 });
 
-socket.on('room-state', (state) => {
-  selfId = state.selfId;
-  players = state.players;
-
-  statusEl.textContent = 'Connecté — salle ' + state.roomId;
-  statusEl.className = 'ok';
-
-  // met à jour l'URL affichée dans le navigateur sans recharger la page,
-  // et prépare le lien d'invitation à partager
-  const inviteUrl = window.location.origin + window.location.pathname + '?room=' + state.roomId;
-  window.history.replaceState({}, '', inviteUrl);
-  document.getElementById('invite-link').value = inviteUrl;
-
-  // si un morceau est déjà en cours dans la salle et vient tout juste d'être lancé,
-  // ce nouvel arrivant essaie de le rejoindre au même top départ
-  if (state.currentTrack && state.currentTrack.startAt > Date.now() - 4000) {
-    const delay = Math.max(0, state.currentTrack.startAt - Date.now());
-    setTimeout(() => startPlaybackOnThisDevice(state.currentTrack.uri), delay);
-  }
-});
-socket.on('player-joined', ({ id, player }) => { players[id] = player; });
-socket.on('player-left', ({ id }) => { delete players[id]; });
-socket.on('player-moved', ({ id, x, y }) => {
-  if (players[id]) { players[id].x = x; players[id].y = y; }
-});
-socket.on('player-posed', ({ id, pose }) => {
-  if (players[id]) players[id].pose = pose;
-});
-socket.on('player-accessory', ({ id, accessory }) => {
-  if (players[id]) players[id].accessory = accessory;
+document.getElementById('copy-btn').addEventListener('click', () => {
+  const input = document.getElementById('invite-link');
+  input.select();
+  navigator.clipboard.writeText(input.value).catch(() => {});
 });
 
 // --- déplacement ---
 const keys = {};
 window.addEventListener('keydown', e => { keys[e.key] = true; });
 window.addEventListener('keyup', e => { keys[e.key] = false; });
-
 let myX = 0.5, myY = 0.6;
 function updateMovement() {
   const speed = 0.006;
@@ -384,10 +210,7 @@ function updateMovement() {
   if (keys['ArrowDown']) myY += speed;
   myX = Math.max(0.05, Math.min(0.95, myX));
   myY = Math.max(0.1, Math.min(0.9, myY));
-  if (selfId && players[selfId]) {
-    players[selfId].x = myX;
-    players[selfId].y = myY;
-  }
+  if (selfId && players[selfId]) { players[selfId].x = myX; players[selfId].y = myY; }
   socket.emit('move', { x: myX, y: myY });
 }
 setInterval(updateMovement, 50);
@@ -400,24 +223,18 @@ function drawBackground() {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
 }
-
 function drawPlayer(p, isMe) {
   const x = p.x * W, y = p.y * H;
   ctx.fillStyle = p.color || '#8d84a3';
   ctx.beginPath();
   ctx.arc(x, y, isMe ? 16 : 13, 0, Math.PI * 2);
   ctx.fill();
-  if (isMe) {
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }
+  if (isMe) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
   ctx.fillStyle = '#e9e4f2';
   ctx.font = '11px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText((p.name || '') + (p.pose && p.pose !== 'idle' ? ' · ' + p.pose : ''), x, y - 22);
 }
-
 function loop() {
   ctx.clearRect(0, 0, W, H);
   drawBackground();
@@ -448,6 +265,78 @@ function escapeHtml(s) {
   d.textContent = s;
   return d.innerHTML;
 }
+
+// --- YouTube (lecture synchronisée, sans aucun compte requis) ---
+let ytPlayer = null;
+let ytPlayerReady = false;
+let pendingVideo = null; // vidéo à jouer dès que le lecteur est prêt
+
+function extractYoutubeId(url) {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtube\.com\/shorts\/|youtu\.be\/)([\w-]{11})/
+  ];
+  for (const re of patterns) {
+    const m = url.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+document.getElementById('youtube-launch-btn').addEventListener('click', () => {
+  const url = document.getElementById('youtube-input').value.trim();
+  const videoId = extractYoutubeId(url);
+  if (!videoId) {
+    alert('Lien YouTube non reconnu. Colle un lien du type https://www.youtube.com/watch?v=... ou https://youtu.be/...');
+    return;
+  }
+  socket.emit('play-video', { videoId, title: url });
+  socket.emit('chat', '📺 a lancé une vidéo YouTube');
+});
+
+socket.on('play-video', (video) => {
+  document.getElementById('youtube-now-playing').textContent = 'En cours : ' + (video.title || video.videoId);
+  scheduleYoutubePlayback(video);
+});
+
+function scheduleYoutubePlayback(video) {
+  const delay = Math.max(0, video.startAt - Date.now());
+  const lateBySeconds = Math.max(0, (Date.now() - video.startAt) / 1000);
+
+  const doPlay = () => {
+    if (!ytPlayerReady) {
+      pendingVideo = { videoId: video.videoId, startSeconds: lateBySeconds };
+      return;
+    }
+    ytPlayer.loadVideoById({ videoId: video.videoId, startSeconds: lateBySeconds });
+  };
+
+  if (delay > 0) {
+    setTimeout(doPlay, delay);
+  } else {
+    doPlay(); // on rejoint une vidéo déjà en cours
+  }
+}
+
+// chargement de l'API YouTube IFrame
+window.onYouTubeIframeAPIReady = function () {
+  ytPlayer = new YT.Player('youtube-player', {
+    height: '100%',
+    width: '100%',
+    playerVars: { autoplay: 1, playsinline: 1 },
+    events: {
+      onReady: () => {
+        ytPlayerReady = true;
+        if (pendingVideo) {
+          ytPlayer.loadVideoById({ videoId: pendingVideo.videoId, startSeconds: pendingVideo.startSeconds });
+          pendingVideo = null;
+        }
+      }
+    }
+  });
+};
+const ytScript = document.createElement('script');
+ytScript.src = 'https://www.youtube.com/iframe_api';
+document.head.appendChild(ytScript);
 </script>
 </body>
 </html>
