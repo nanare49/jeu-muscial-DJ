@@ -71,6 +71,8 @@
     margin-top: 8px; width: 100%; aspect-ratio: 16/9;
     border-radius: 8px; overflow: hidden; background: #000;
   }
+  #youtube-controls { display: flex; gap: 6px; margin-top: 8px; }
+  #youtube-controls .btn { flex: 1; text-align: center; font-size: 11px; padding: 6px 4px; }
 
   #bottom-bars {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
@@ -128,6 +130,11 @@
   </div>
   <div id="youtube-now-playing">Aucune vidéo en cours.</div>
   <div id="youtube-player-wrap"><div id="youtube-player"></div></div>
+  <div id="youtube-controls">
+    <div class="btn" id="yt-back-btn">⏪ -10s</div>
+    <div class="btn" id="yt-pause-btn">⏸ Pause</div>
+    <div class="btn" id="yt-forward-btn">+10s ⏩</div>
+  </div>
 </div>
 
 <div id="bottom-bars">
@@ -182,8 +189,7 @@ socket.on('room-state', (state) => {
   document.getElementById('invite-link').value = inviteUrl;
 
   if (state.currentVideo) {
-    document.getElementById('youtube-now-playing').textContent = 'En cours : ' + (state.currentVideo.title || state.currentVideo.videoId);
-    scheduleYoutubePlayback(state.currentVideo);
+    applyVideoState(state.currentVideo);
   }
 });
 socket.on('player-joined', ({ id, player }) => { players[id] = player; });
@@ -461,7 +467,9 @@ function escapeHtml(s) {
 // --- YouTube (lecture synchronisée, sans aucun compte requis) ---
 let ytPlayer = null;
 let ytPlayerReady = false;
-let pendingVideo = null;
+let pendingVideo = null;       // dernier état reçu avant que le lecteur soit prêt
+let currentLoadedVideoId = null;
+let currentVideoState = null;  // dernier état connu (paused, positionSec, anchorAt, videoId)
 
 // --- correction d'horloge (pour un top départ fiable même avec une heure système décalée) ---
 let clockOffset = 0; // à ajouter à Date.now() pour estimer l'heure du serveur
@@ -496,35 +504,71 @@ document.getElementById('youtube-launch-btn').addEventListener('click', () => {
   socket.emit('chat', '📺 a lancé une vidéo YouTube');
 });
 
-socket.on('play-video', (video) => {
-  document.getElementById('youtube-now-playing').textContent = 'En cours : ' + (video.title || video.videoId);
-  scheduleYoutubePlayback(video);
+function currentActualPosition(cv) {
+  if (!cv) return 0;
+  return cv.paused ? cv.positionSec : cv.positionSec + Math.max(0, serverNow() - cv.anchorAt) / 1000;
+}
+
+document.getElementById('yt-pause-btn').addEventListener('click', () => {
+  if (!currentVideoState) return;
+  const pos = currentActualPosition(currentVideoState);
+  const goingToPause = !currentVideoState.paused;
+  socket.emit('video-control', { action: goingToPause ? 'pause' : 'play', positionSec: pos });
+});
+document.getElementById('yt-back-btn').addEventListener('click', () => {
+  if (!currentVideoState) return;
+  const pos = Math.max(0, currentActualPosition(currentVideoState) - 10);
+  socket.emit('video-control', { action: 'seek', positionSec: pos });
+});
+document.getElementById('yt-forward-btn').addEventListener('click', () => {
+  if (!currentVideoState) return;
+  const pos = currentActualPosition(currentVideoState) + 10;
+  socket.emit('video-control', { action: 'seek', positionSec: pos });
 });
 
-function scheduleYoutubePlayback(video) {
-  const delay = Math.max(0, video.startAt - serverNow());
-  const doPlay = () => {
-    const lateBySeconds = Math.max(0, (serverNow() - video.startAt) / 1000);
-    if (!ytPlayerReady) {
-      pendingVideo = { videoId: video.videoId, startAt: video.startAt };
-      return;
+socket.on('video-state', (cv) => applyVideoState(cv));
+
+// Applique un état de lecture reçu du serveur : charge la vidéo si besoin,
+// se cale sur la bonne position, et joue ou met en pause selon le cas.
+// Recalcule toujours tout au moment de l'exécution (jamais figé à l'avance),
+// ce qui évite les décalages si le lecteur n'était pas encore prêt.
+function applyVideoState(cv) {
+  currentVideoState = cv;
+  document.getElementById('youtube-now-playing').textContent =
+    (cv.paused ? '⏸ En pause : ' : '▶ En cours : ') + (cv.title || cv.videoId);
+  document.getElementById('yt-pause-btn').textContent = cv.paused ? '▶ Lecture' : '⏸ Pause';
+
+  const delay = cv.anchorAt - serverNow(); // positif seulement pour un tout nouveau morceau (top départ futur)
+
+  const doApply = () => {
+    if (!ytPlayerReady) { pendingVideo = cv; return; }
+    const pos = Math.max(0, currentActualPosition(cv));
+    const isNewVideo = cv.videoId !== currentLoadedVideoId;
+
+    if (isNewVideo) {
+      currentLoadedVideoId = cv.videoId;
+      ytPlayer.loadVideoById({ videoId: cv.videoId, startSeconds: pos });
+      if (cv.paused) setTimeout(() => ytPlayer.pauseVideo(), 400);
+    } else {
+      ytPlayer.seekTo(pos, true);
+      if (cv.paused) ytPlayer.pauseVideo(); else ytPlayer.playVideo();
     }
-    ytPlayer.loadVideoById({ videoId: video.videoId, startSeconds: lateBySeconds });
   };
-  if (delay > 0) setTimeout(doPlay, delay); else doPlay();
+
+  if (delay > 0) setTimeout(doApply, delay); else doApply();
 }
 
 window.onYouTubeIframeAPIReady = function () {
   ytPlayer = new YT.Player('youtube-player', {
     height: '100%', width: '100%',
-    playerVars: { autoplay: 1, playsinline: 1 },
+    playerVars: { autoplay: 1, playsinline: 1, controls: 0 },
     events: {
       onReady: () => {
         ytPlayerReady = true;
         if (pendingVideo) {
-          const lateBySeconds = Math.max(0, (serverNow() - pendingVideo.startAt) / 1000);
-          ytPlayer.loadVideoById({ videoId: pendingVideo.videoId, startSeconds: lateBySeconds });
+          const cv = pendingVideo;
           pendingVideo = null;
+          applyVideoState(cv); // recalcule tout depuis zéro, maintenant que le lecteur est prêt
         }
       }
     }
