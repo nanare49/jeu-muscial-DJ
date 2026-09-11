@@ -162,7 +162,10 @@ let currentDecor = 'mainstage';
 const urlParams = new URLSearchParams(window.location.search);
 const requestedRoom = urlParams.get('room') || '';
 
-socket.on('connect', () => { socket.emit('join-room', requestedRoom); });
+socket.on('connect', () => {
+  socket.emit('join-room', requestedRoom);
+  syncClock();
+});
 socket.on('disconnect', () => { statusEl.textContent = 'Déconnecté'; statusEl.className = 'off'; });
 
 socket.on('room-state', (state) => {
@@ -460,6 +463,19 @@ let ytPlayer = null;
 let ytPlayerReady = false;
 let pendingVideo = null;
 
+// --- correction d'horloge (pour un top départ fiable même avec une heure système décalée) ---
+let clockOffset = 0; // à ajouter à Date.now() pour estimer l'heure du serveur
+function serverNow() { return Date.now() + clockOffset; }
+
+function syncClock(attemptsLeft = 3) {
+  const t0 = Date.now();
+  socket.emit('time-sync', null, (serverTime) => {
+    const rtt = Date.now() - t0;
+    clockOffset = (serverTime + rtt / 2) - Date.now();
+    if (attemptsLeft > 1) setTimeout(() => syncClock(attemptsLeft - 1), 300);
+  });
+}
+
 function extractYoutubeId(url) {
   const patterns = [/(?:youtube\.com\/watch\?v=|youtube\.com\/shorts\/|youtu\.be\/)([\w-]{11})/];
   for (const re of patterns) {
@@ -486,10 +502,13 @@ socket.on('play-video', (video) => {
 });
 
 function scheduleYoutubePlayback(video) {
-  const delay = Math.max(0, video.startAt - Date.now());
-  const lateBySeconds = Math.max(0, (Date.now() - video.startAt) / 1000);
+  const delay = Math.max(0, video.startAt - serverNow());
   const doPlay = () => {
-    if (!ytPlayerReady) { pendingVideo = { videoId: video.videoId, startSeconds: lateBySeconds }; return; }
+    const lateBySeconds = Math.max(0, (serverNow() - video.startAt) / 1000);
+    if (!ytPlayerReady) {
+      pendingVideo = { videoId: video.videoId, startAt: video.startAt };
+      return;
+    }
     ytPlayer.loadVideoById({ videoId: video.videoId, startSeconds: lateBySeconds });
   };
   if (delay > 0) setTimeout(doPlay, delay); else doPlay();
@@ -503,7 +522,8 @@ window.onYouTubeIframeAPIReady = function () {
       onReady: () => {
         ytPlayerReady = true;
         if (pendingVideo) {
-          ytPlayer.loadVideoById({ videoId: pendingVideo.videoId, startSeconds: pendingVideo.startSeconds });
+          const lateBySeconds = Math.max(0, (serverNow() - pendingVideo.startAt) / 1000);
+          ytPlayer.loadVideoById({ videoId: pendingVideo.videoId, startSeconds: lateBySeconds });
           pendingVideo = null;
         }
       }
