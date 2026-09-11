@@ -1,0 +1,15 @@
+{
+  "name": "jeu-musical-serveur-minimal",
+  "version": "0.1.0",
+  "description": "Serveur minimal pour tester la synchro temps réel (position, pose, chat) entre plusieurs fenêtres",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "express-session": "^1.19.0",
+    "socket.io": "^4.7.5"
+  }
+}
