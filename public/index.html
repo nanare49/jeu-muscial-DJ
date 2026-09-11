@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<title>Test synchro — serveur minimal</title>
+<title>Jeu musical — serveur</title>
 <style>
   :root {
     --bg: #08060c;
@@ -43,6 +43,10 @@
     background: var(--accent); border: none; color: #2a0b18;
     font-weight: 600; font-size: 11px; border-radius: 6px; padding: 0 10px; cursor: pointer;
   }
+  #decor-select {
+    width: 100%; margin-top: 8px; background: #1d1829; border: 1px solid var(--line);
+    color: var(--text); border-radius: 6px; padding: 6px 8px; font-size: 12px;
+  }
 
   #youtube-box {
     position: fixed; right: 16px; top: 16px; z-index: 20;
@@ -62,22 +66,20 @@
     background: #ff0033; border: none; color: #fff;
     font-weight: 600; font-size: 12px; border-radius: 6px; padding: 0 12px; cursor: pointer;
   }
-  #youtube-now-playing {
-    margin-top: 8px; font-size: 11px; color: var(--muted);
-  }
+  #youtube-now-playing { margin-top: 8px; font-size: 11px; color: var(--muted); }
   #youtube-player-wrap {
     margin-top: 8px; width: 100%; aspect-ratio: 16/9;
     border-radius: 8px; overflow: hidden; background: #000;
   }
 
-  #controls {
+  #bottom-bars {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
-    z-index: 20;
-    display: flex; gap: 8px;
+    z-index: 20; display: flex; flex-direction: column; gap: 8px; align-items: center;
   }
+  .bar { display: flex; gap: 8px; background: rgba(20,16,28,0.9); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
   .btn {
     background: #1d1829; border: 1px solid var(--line); color: var(--text);
-    border-radius: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer;
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;
   }
   .btn.active { background: var(--accent); color: #2a0b18; font-weight: 600; border-color: var(--accent); }
 
@@ -103,17 +105,20 @@
 <canvas id="stage"></canvas>
 
 <div class="panel">
-  <h1>Test de synchro — serveur minimal</h1>
-  <p>Ouvre cette page dans plusieurs onglets ou fenêtres : chaque joueur doit voir les autres bouger et changer de pose en direct.</p>
+  <h1>Jeu musical — test serveur</h1>
+  <p>Ouvre cette page dans plusieurs onglets : chaque joueur doit voir les autres bouger, danser et changer d'accessoire en direct.</p>
   <p>Déplacement : flèches du clavier</p>
   <div id="status" class="off">Connexion...</div>
   <div id="invite-row">
     <input id="invite-link" readonly value="">
     <button id="copy-btn">Copier</button>
   </div>
+  <select id="decor-select">
+    <option value="mainstage">Mainstage festival</option>
+    <option value="nightclub">Boîte de nuit</option>
+    <option value="wheatfield">Champ de blé</option>
+  </select>
 </div>
-
-<div id="controls"></div>
 
 <div id="youtube-box">
   <h2>Musique (YouTube)</h2>
@@ -123,6 +128,11 @@
   </div>
   <div id="youtube-now-playing">Aucune vidéo en cours.</div>
   <div id="youtube-player-wrap"><div id="youtube-player"></div></div>
+</div>
+
+<div id="bottom-bars">
+  <div class="bar" id="poseBar"></div>
+  <div class="bar" id="accessoryBar"></div>
 </div>
 
 <div id="chat-wrap">
@@ -147,6 +157,7 @@ const socket = io();
 
 let selfId = null;
 let players = {};
+let currentDecor = 'mainstage';
 
 const urlParams = new URLSearchParams(window.location.search);
 const requestedRoom = urlParams.get('room') || '';
@@ -157,6 +168,8 @@ socket.on('disconnect', () => { statusEl.textContent = 'Déconnecté'; statusEl.
 socket.on('room-state', (state) => {
   selfId = state.selfId;
   players = state.players;
+  currentDecor = state.decor || 'mainstage';
+  document.getElementById('decor-select').value = currentDecor;
 
   statusEl.textContent = 'Connecté — salle ' + state.roomId;
   statusEl.className = 'ok';
@@ -175,20 +188,49 @@ socket.on('player-left', ({ id }) => { delete players[id]; });
 socket.on('player-moved', ({ id, x, y }) => { if (players[id]) { players[id].x = x; players[id].y = y; } });
 socket.on('player-posed', ({ id, pose }) => { if (players[id]) players[id].pose = pose; });
 socket.on('player-accessory', ({ id, accessory }) => { if (players[id]) players[id].accessory = accessory; });
+socket.on('decor-changed', (decor) => {
+  currentDecor = decor;
+  document.getElementById('decor-select').value = decor;
+});
 
-const poses = ['idle', 'hands_up', 'jump', 'clap'];
-const poseLabels = { idle: 'Repos', hands_up: 'Mains en l\u2019air', jump: 'Saute', clap: 'Applaudit' };
-const controls = document.getElementById('controls');
+document.getElementById('decor-select').addEventListener('change', (e) => {
+  socket.emit('decor', e.target.value);
+});
+
+// --- poses et accessoires ---
+const poses = ['idle', 'hands_up', 'jump', 'clap', 'dance1', 'dance2'];
+const poseLabels = { idle: 'Repos', hands_up: 'Mains en l\u2019air', jump: 'Saute', clap: 'Applaudit', dance1: 'Danse 1', dance2: 'Danse 2' };
+const poseBar = document.getElementById('poseBar');
 poses.forEach(p => {
   const btn = document.createElement('div');
   btn.className = 'btn' + (p === 'idle' ? ' active' : '');
   btn.textContent = poseLabels[p];
   btn.addEventListener('click', () => {
     socket.emit('pose', p);
-    controls.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+    poseBar.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
   });
-  controls.appendChild(btn);
+  poseBar.appendChild(btn);
+});
+
+const accessories = [
+  { id: 'none', label: 'Aucun' },
+  { id: 'cap', label: 'Casquette' },
+  { id: 'hat', label: 'Chapeau' },
+  { id: 'buoy', label: 'Bouée' },
+  { id: 'costume', label: 'Costume' }
+];
+const accessoryBar = document.getElementById('accessoryBar');
+accessories.forEach(a => {
+  const btn = document.createElement('div');
+  btn.className = 'btn' + (a.id === 'none' ? ' active' : '');
+  btn.textContent = a.label;
+  btn.addEventListener('click', () => {
+    socket.emit('accessory', a.id);
+    accessoryBar.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+  accessoryBar.appendChild(btn);
 });
 
 document.getElementById('copy-btn').addEventListener('click', () => {
@@ -209,36 +251,183 @@ function updateMovement() {
   if (keys['ArrowUp']) myY -= speed;
   if (keys['ArrowDown']) myY += speed;
   myX = Math.max(0.05, Math.min(0.95, myX));
-  myY = Math.max(0.1, Math.min(0.9, myY));
+  myY = Math.max(0.15, Math.min(0.9, myY));
   if (selfId && players[selfId]) { players[selfId].x = myX; players[selfId].y = myY; }
   socket.emit('move', { x: myX, y: myY });
 }
 setInterval(updateMovement, 50);
 
-// --- rendu ---
+// --- rendu du décor ---
+const decorThemes = {
+  mainstage: { sky1: '#241a33', sky2: '#08060c', stage: '#171223', accent: 'rgba(255,95,163,0.5)' },
+  nightclub: { sky1: '#1a1024', sky2: '#040308', stage: '#0d0a14', accent: 'rgba(120,90,255,0.5)' },
+  wheatfield: { sky1: '#3a2f1a', sky2: '#120e08', stage: '#2b2312', accent: 'rgba(255,200,90,0.5)' }
+};
 function drawBackground() {
-  const grad = ctx.createRadialGradient(W/2, H*0.3, 50, W/2, H*0.3, W*0.7);
-  grad.addColorStop(0, '#241a33');
-  grad.addColorStop(1, '#08060c');
+  const theme = decorThemes[currentDecor] || decorThemes.mainstage;
+  const grad = ctx.createRadialGradient(W/2, H*0.2, 50, W/2, H*0.2, W*0.75);
+  grad.addColorStop(0, theme.sky1);
+  grad.addColorStop(1, theme.sky2);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = theme.stage;
+  ctx.fillRect(W * 0.24, H * 0.05, W * 0.52, H * 0.13);
+  ctx.fillStyle = theme.accent;
+  for (let i = 0; i < 6; i++) {
+    ctx.beginPath();
+    ctx.arc(W * 0.30 + i * (W * 0.4 / 5), H * 0.11, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
-function drawPlayer(p, isMe) {
-  const x = p.x * W, y = p.y * H;
-  ctx.fillStyle = p.color || '#8d84a3';
+
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+
+// avatar vu de dos, style détaillé (grosse tête, corps "chunky", accessoires)
+function drawPlayer(p, isMe, t) {
+  const cx = p.x * W, cy = p.y * H;
+  const scale = isMe ? 1.05 : 0.9;
+  const move = p.pose || 'idle';
+  const accessory = p.accessory || 'none';
+  const shirtColor = p.color || '#8d84a3';
+  const pantsColor = '#2a2438';
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+
+  let armAngle = 0.3, armLift = 0, bob = 0, sway = 0, legSpread = 6;
+  if (move === 'idle') { bob = Math.sin(t / 600) * 2; sway = Math.sin(t / 800) * 2; }
+  else if (move === 'hands_up') { armLift = 1; bob = Math.abs(Math.sin(t / 260)) * 7; }
+  else if (move === 'jump') { armLift = 0.6; bob = Math.abs(Math.sin(t / 200)) * 18; legSpread = 10; }
+  else if (move === 'clap') { armLift = 0.75; armAngle = 1.0; bob = Math.abs(Math.sin(t / 240)) * 5; }
+  else if (move === 'dance1') { sway = Math.sin(t / 300) * 18; armAngle = 0.5 + Math.sin(t / 300) * 0.4; bob = Math.abs(Math.sin(t / 300)) * 6; }
+  else if (move === 'dance2') { sway = Math.sin(t / 200) * 10; armLift = (Math.sin(t / 200) + 1) / 2; bob = Math.abs(Math.cos(t / 200)) * 10; legSpread = 7 + Math.sin(t / 200) * 3; }
+
+  ctx.translate(sway, -bob);
+
+  ctx.save();
+  ctx.translate(-sway, bob);
+  ctx.fillStyle = 'rgba(0,0,0,0.42)';
   ctx.beginPath();
-  ctx.arc(x, y, isMe ? 16 : 13, 0, Math.PI * 2);
+  ctx.ellipse(0, 46, 20, 6, 0, 0, Math.PI * 2);
   ctx.fill();
-  if (isMe) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
+  ctx.restore();
+
+  ctx.fillStyle = pantsColor;
+  roundRect(ctx, -13, 16, 10, 20, 4);
+  roundRect(ctx, 3, 16, 10, 20, 4);
+  ctx.fill();
+  ctx.fillStyle = '#1c1626';
+  roundRect(ctx, -14, 33, 12, 7, 3);
+  roundRect(ctx, 2, 33, 12, 7, 3);
+  ctx.fill();
+
+  ctx.fillStyle = shirtColor;
+  roundRect(ctx, -17, -18, 34, 38, 12);
+  ctx.fill();
+
+  if (accessory === 'costume') {
+    ctx.strokeStyle = '#ff5fa3';
+    ctx.lineWidth = 2;
+    roundRect(ctx, -17, -18, 34, 38, 12);
+    ctx.stroke();
+  }
+  if (accessory === 'buoy') {
+    ctx.strokeStyle = '#ff8a3d';
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.ellipse(0, 10, 22, 10, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = '#ffd08a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(0, 10, 22, 10, 0, 0.3, 1.2);
+    ctx.ellipse(0, 10, 22, 10, 0, 2.0, 2.9);
+    ctx.stroke();
+  }
+
+  const shoulderY = -10, armLen = 24;
+  const angle = armAngle + (Math.PI / 2 + 0.2 - armAngle) * armLift;
+  const lx = -16 - Math.cos(angle) * armLen, ly = shoulderY - Math.sin(angle) * armLen;
+  let rx = 16 + Math.cos(angle) * armLen, ry = shoulderY - Math.sin(angle) * armLen;
+  if (move === 'clap') { rx = lx + 6; ry = ly; }
+
+  ctx.strokeStyle = shirtColor;
+  ctx.lineWidth = 9;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-16, shoulderY); ctx.lineTo(lx, ly);
+  ctx.moveTo(16, shoulderY); ctx.lineTo(rx, ry);
+  ctx.stroke();
+
+  const skinTone = '#f0cca3';
+  ctx.fillStyle = skinTone;
+  ctx.beginPath();
+  ctx.arc(lx, ly, 6.5, 0, Math.PI * 2);
+  ctx.arc(rx, ry, 6.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = skinTone;
+  ctx.beginPath();
+  ctx.arc(0, -32, 17, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#241c30';
+  ctx.beginPath();
+  ctx.arc(0, -34, 17.6, Math.PI * 0.02, Math.PI * 0.98);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = skinTone;
+  ctx.beginPath();
+  ctx.arc(-16, -28, 3.2, 0, Math.PI * 2);
+  ctx.arc(16, -28, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (accessory === 'cap') {
+    ctx.fillStyle = '#2f9e6b';
+    ctx.beginPath();
+    ctx.arc(0, -35, 18.2, Math.PI * 0.85, Math.PI * 2.15);
+    ctx.fill();
+    ctx.fillRect(-6, -19, 12, 5);
+  } else if (accessory === 'hat') {
+    ctx.fillStyle = '#caa25a';
+    ctx.beginPath();
+    ctx.ellipse(0, -40, 25, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(0, -47, 12, Math.PI, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (isMe) {
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, -32, 23, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // nom au-dessus
   ctx.fillStyle = '#e9e4f2';
   ctx.font = '11px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText((p.name || '') + (p.pose && p.pose !== 'idle' ? ' · ' + p.pose : ''), x, y - 22);
+  ctx.fillText(p.name || '', cx, cy - 78 * scale);
 }
-function loop() {
+
+function loop(t) {
   ctx.clearRect(0, 0, W, H);
   drawBackground();
-  Object.entries(players).forEach(([id, p]) => drawPlayer(p, id === selfId));
+  Object.entries(players).forEach(([id, p]) => drawPlayer(p, id === selfId, t));
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -269,12 +458,10 @@ function escapeHtml(s) {
 // --- YouTube (lecture synchronisée, sans aucun compte requis) ---
 let ytPlayer = null;
 let ytPlayerReady = false;
-let pendingVideo = null; // vidéo à jouer dès que le lecteur est prêt
+let pendingVideo = null;
 
 function extractYoutubeId(url) {
-  const patterns = [
-    /(?:youtube\.com\/watch\?v=|youtube\.com\/shorts\/|youtu\.be\/)([\w-]{11})/
-  ];
+  const patterns = [/(?:youtube\.com\/watch\?v=|youtube\.com\/shorts\/|youtu\.be\/)([\w-]{11})/];
   for (const re of patterns) {
     const m = url.match(re);
     if (m) return m[1];
@@ -301,27 +488,16 @@ socket.on('play-video', (video) => {
 function scheduleYoutubePlayback(video) {
   const delay = Math.max(0, video.startAt - Date.now());
   const lateBySeconds = Math.max(0, (Date.now() - video.startAt) / 1000);
-
   const doPlay = () => {
-    if (!ytPlayerReady) {
-      pendingVideo = { videoId: video.videoId, startSeconds: lateBySeconds };
-      return;
-    }
+    if (!ytPlayerReady) { pendingVideo = { videoId: video.videoId, startSeconds: lateBySeconds }; return; }
     ytPlayer.loadVideoById({ videoId: video.videoId, startSeconds: lateBySeconds });
   };
-
-  if (delay > 0) {
-    setTimeout(doPlay, delay);
-  } else {
-    doPlay(); // on rejoint une vidéo déjà en cours
-  }
+  if (delay > 0) setTimeout(doPlay, delay); else doPlay();
 }
 
-// chargement de l'API YouTube IFrame
 window.onYouTubeIframeAPIReady = function () {
   ytPlayer = new YT.Player('youtube-player', {
-    height: '100%',
-    width: '100%',
+    height: '100%', width: '100%',
     playerVars: { autoplay: 1, playsinline: 1 },
     events: {
       onReady: () => {
