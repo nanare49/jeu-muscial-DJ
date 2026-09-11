@@ -135,9 +135,43 @@ io.on('connection', (socket) => {
     if (!currentRoomId || !videoId) return;
     const room = rooms.get(currentRoomId);
     if (!room) return;
-    const startAt = Date.now() + 6000; // 6 secondes de marge (laisse le temps au lecteur YouTube de s'initialiser chez tout le monde)
-    room.currentVideo = { videoId, title: String(title || '').slice(0, 100), startAt };
-    io.to(currentRoomId).emit('play-video', room.currentVideo);
+    room.currentVideo = {
+      videoId,
+      title: String(title || '').slice(0, 100),
+      paused: false,
+      positionSec: 0,
+      anchorAt: Date.now() + 6000 // 6 secondes de marge avant le vrai départ
+    };
+    io.to(currentRoomId).emit('video-state', room.currentVideo);
+  });
+
+  // Contrôle de lecture partagé : pause, reprise, avance/retour dans le temps.
+  // N'importe qui dans la salle peut agir, comme une vraie régie commune.
+  socket.on('video-control', ({ action, positionSec }) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const cv = room && room.currentVideo;
+    if (!cv) return;
+
+    const actualPos = cv.paused
+      ? cv.positionSec
+      : cv.positionSec + Math.max(0, Date.now() - cv.anchorAt) / 1000;
+
+    if (action === 'pause') {
+      cv.paused = true;
+      cv.positionSec = positionSec != null ? positionSec : actualPos;
+    } else if (action === 'play') {
+      cv.paused = false;
+      cv.positionSec = positionSec != null ? positionSec : actualPos;
+      cv.anchorAt = Date.now();
+    } else if (action === 'seek') {
+      cv.positionSec = Math.max(0, positionSec);
+      if (!cv.paused) cv.anchorAt = Date.now();
+    } else {
+      return;
+    }
+
+    io.to(currentRoomId).emit('video-state', cv);
   });
 
   socket.on('decor', (decor) => {
