@@ -115,6 +115,55 @@
   .fx-slider-row label { font-size: 12px; color: var(--muted); width: 70px; flex-shrink: 0; }
   .fx-slider-row input[type="range"] { flex: 1; }
 
+  #profile-line { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  #profile-coins { color: #ffd35a; font-weight: 600; }
+
+  .system-msg { color: var(--muted); font-style: italic; }
+
+  #rating-box {
+    position: fixed; right: 16px; top: 420px; z-index: 20;
+    background: rgba(20, 16, 28, 0.9);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    width: 280px;
+  }
+  #rating-box h2 { font-size: 13px; font-weight: 500; margin: 0 0 10px; }
+  .star-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .star-row label { font-size: 12px; color: var(--muted); width: 68px; flex-shrink: 0; }
+  .star-row .stars { display: flex; gap: 2px; }
+  .star-row .star { cursor: pointer; font-size: 17px; color: var(--line); user-select: none; }
+  .star-row .star.filled { color: #ffd35a; }
+
+  #shop-toggle-btn {
+    position: fixed; left: 16px; bottom: 16px; z-index: 20;
+    background: rgba(20, 16, 28, 0.9); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 8px 14px; font-size: 12px; cursor: pointer;
+  }
+  #shop-box {
+    position: fixed; left: 16px; bottom: 60px; z-index: 20;
+    background: rgba(20, 16, 28, 0.95);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    width: 280px;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  #shop-box h2 { font-size: 13px; font-weight: 500; margin: 0 0 10px; }
+  .shop-item {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line);
+  }
+  .shop-item:last-child { border-bottom: none; }
+  .shop-item .shop-item-label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .shop-item button {
+    background: var(--accent); border: none; color: #2a0b18;
+    font-weight: 600; font-size: 11px; border-radius: 6px; padding: 5px 10px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .shop-item button:disabled { background: #3a3448; color: var(--muted); cursor: not-allowed; }
+
   #bottom-bars {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
     z-index: 20; display: flex; flex-direction: column; gap: 8px; align-items: center;
@@ -235,6 +284,7 @@
   <p>Ouvre cette page dans plusieurs onglets : chaque joueur doit voir les autres bouger, danser et changer d'accessoire en direct.</p>
   <p>Déplacement : flèches du clavier</p>
   <div id="status" class="off">Connexion...</div>
+  <div id="profile-line">Niveau 1 · <span id="profile-xp">0/100 XP</span> · 🪙 <span id="profile-coins">0</span></div>
   <div id="invite-row">
     <input id="invite-link" readonly value="">
     <button id="copy-btn">Copier</button>
@@ -349,6 +399,19 @@
   </div>
 </div>
 
+<div id="rating-box" style="display:none;">
+  <h2>Noter le DJ</h2>
+  <div id="rating-rows"></div>
+  <button class="btn" id="rating-submit-btn" style="width:100%; margin-top:6px;">Envoyer ma note</button>
+  <div id="rating-ack" style="display:none; font-size:11px; color:var(--muted); margin-top:6px;">✓ Note envoyée — merci ! Tu peux la changer tant que le passage n'est pas fini.</div>
+</div>
+
+<button id="shop-toggle-btn">🛍 Boutique</button>
+<div id="shop-box" style="display:none;">
+  <h2>Boutique</h2>
+  <div id="shop-items"></div>
+</div>
+
 <div id="bottom-bars">
   <div class="bar" id="poseBar"></div>
   <div class="bar" id="accessoryBar"></div>
@@ -416,6 +479,22 @@ if (savedAvatarPrefs) {
   }
 }
 
+// Identifiant persistant de ce navigateur : c'est lui qui retrouve le profil
+// (niveau, XP, pièces, objets achetés) d'une visite à l'autre. Pas un vrai
+// compte : pas de mot de passe, juste gardé dans ce navigateur.
+let myPlayerToken = null;
+try {
+  myPlayerToken = localStorage.getItem('jeuMusicalPlayerToken');
+} catch (e) { /* ignore */ }
+if (!myPlayerToken) {
+  myPlayerToken = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : 'tok-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  try { localStorage.setItem('jeuMusicalPlayerToken', myPlayerToken); } catch (e) { /* ignore */ }
+}
+let myProfile = { xp: 0, coins: 0, level: 1, xpIntoLevel: 0, xpPerLevel: 100, ownedItems: [], avgRating: null };
+let shopCatalog = [];
+
 const avatarPreviewCanvas = document.getElementById('avatar-preview-canvas');
 const avatarPreviewCtx = avatarPreviewCanvas.getContext('2d');
 
@@ -470,7 +549,8 @@ document.getElementById('avatar-confirm-btn').addEventListener('click', () => {
     roomId: requestedRoom,
     avatarType: avatarTypes[avatarTypeIndex],
     avatarColor: avatarColorChoices[avatarColorIndex],
-    name: chosenName
+    name: chosenName,
+    token: myPlayerToken
   });
 });
 
@@ -518,6 +598,21 @@ socket.on('room-state', (state) => {
     currentLightEffects = state.lightEffects;
     syncLightEffectsControls();
   }
+
+  // Le serveur peut avoir dû générer un nouveau token (première visite, ou
+  // ancien navigateur sans token) : on le garde pour la prochaine fois.
+  if (state.token && state.token !== myPlayerToken) {
+    myPlayerToken = state.token;
+    try { localStorage.setItem('jeuMusicalPlayerToken', myPlayerToken); } catch (e) { /* ignore */ }
+  }
+  if (state.profile) myProfile = state.profile;
+  if (state.shopCatalog) shopCatalog = state.shopCatalog;
+  myRatingSubmitted = false;
+  renderProfileLine();
+  renderShopBox();
+  renderAccessoryBar();
+  renderRatingBox();
+
   renderBubbleControlBar();
   renderDjModeUI();
 });
@@ -532,7 +627,40 @@ socket.on('player-posed', ({ id, pose }) => {
 socket.on('player-accessory', ({ id, accessory }) => { if (players[id]) players[id].accessory = accessory; });
 socket.on('player-bubble-style', ({ id, style }) => { if (players[id]) players[id].bubbleStyle = style; });
 socket.on('player-bubble-size', ({ id, size }) => { if (players[id]) players[id].bubbleSize = size; });
-socket.on('dj-changed', (djId) => { myDjId = djId; renderBubbleControlBar(); renderDjModeUI(); });
+socket.on('dj-changed', (djId) => {
+  myDjId = djId;
+  myRatingSubmitted = false; // nouveau passage DJ : on peut noter à nouveau
+  renderBubbleControlBar();
+  renderDjModeUI();
+  renderRatingBox();
+});
+socket.on('profile-updated', (profile) => {
+  myProfile = profile;
+  renderProfileLine();
+  renderShopBox();
+  renderAccessoryBar();
+});
+socket.on('rate-dj-ack', () => {
+  myRatingSubmitted = true;
+  renderRatingBox();
+});
+socket.on('dj-turn-result', (result) => {
+  const line = document.createElement('div');
+  line.className = 'system-msg';
+  let msg = '🎚 Fin du passage de ' + escapeHtml(result.name) + ' : +' + result.xpGain + ' XP, +' + result.coinsGain + ' 🪙';
+  if (result.avgRating) {
+    msg += ' (notes moyennes — musique ' + result.avgRating.music.toFixed(1)
+      + ', lumières ' + result.avgRating.lights.toFixed(1)
+      + ', prestance ' + result.avgRating.presence.toFixed(1)
+      + ' sur ' + result.ratersCount + ' vote(s))';
+  } else {
+    msg += ' (personne n’a voté cette fois)';
+  }
+  if (result.leveledUp) msg += ' — niveau ' + result.level + ' ! 🎉';
+  line.textContent = msg;
+  chatLog.appendChild(line);
+  chatLog.scrollTop = chatLog.scrollHeight;
+});
 socket.on('dj-mode-changed', ({ mode, queue }) => { djMode = mode; djQueue = queue; renderDjModeUI(); });
 socket.on('dj-queue-changed', (queue) => { djQueue = queue; renderDjModeUI(); });
 socket.on('light-effects-changed', (le) => { currentLightEffects = le; syncLightEffectsControls(); });
@@ -730,7 +858,7 @@ function renderPoseBar() {
   });
 }
 
-const accessories = [
+const freeAccessories = [
   { id: 'none', label: 'Aucun' },
   { id: 'cap', label: 'Casquette' },
   { id: 'hat', label: 'Chapeau' },
@@ -738,17 +866,121 @@ const accessories = [
   { id: 'costume', label: 'Costume' }
 ];
 const accessoryBar = document.getElementById('accessoryBar');
-accessories.forEach(a => {
-  const btn = document.createElement('div');
-  btn.className = 'btn' + (a.id === 'none' ? ' active' : '');
-  btn.textContent = a.label;
-  btn.addEventListener('click', () => {
-    socket.emit('accessory', a.id);
-    accessoryBar.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
+
+// Reconstruit la barre d'accessoires : les gratuits, plus les objets de la
+// boutique déjà achetés (ceux non achetés n'apparaissent pas ici — on les
+// achète depuis la boutique). Appelée au chargement et à chaque mise à jour
+// du profil (un achat vient de débloquer un nouvel objet).
+function renderAccessoryBar() {
+  const ownedPremium = shopCatalog.filter(item => item.slot === 'accessory' && myProfile.ownedItems.includes(item.id));
+  const all = freeAccessories.concat(ownedPremium.map(item => ({ id: item.id, label: (item.emoji ? item.emoji + ' ' : '') + item.label })));
+  const currentAccessory = (players[selfId] && players[selfId].accessory) || 'none';
+
+  accessoryBar.innerHTML = '';
+  all.forEach(a => {
+    const btn = document.createElement('div');
+    btn.className = 'btn' + (a.id === currentAccessory ? ' active' : '');
+    btn.textContent = a.label;
+    btn.addEventListener('click', () => {
+      socket.emit('accessory', a.id);
+      accessoryBar.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+    accessoryBar.appendChild(btn);
   });
-  accessoryBar.appendChild(btn);
+}
+renderAccessoryBar();
+
+// --- profil (niveau/XP/pièces), boutique, et notes données au DJ ---
+function renderProfileLine() {
+  document.getElementById('profile-line').innerHTML =
+    'Niveau ' + myProfile.level + ' · <span id="profile-xp">' + myProfile.xpIntoLevel + '/' + myProfile.xpPerLevel + ' XP</span>'
+    + ' · 🪙 <span id="profile-coins">' + myProfile.coins + '</span>';
+}
+renderProfileLine();
+
+function renderShopBox() {
+  const list = document.getElementById('shop-items');
+  list.innerHTML = '';
+  shopCatalog.forEach(item => {
+    const owned = myProfile.ownedItems.includes(item.id);
+    const row = document.createElement('div');
+    row.className = 'shop-item';
+    const label = document.createElement('div');
+    label.className = 'shop-item-label';
+    label.textContent = (item.emoji ? item.emoji + ' ' : '') + item.label + ' — ' + item.price + ' 🪙';
+    const btn = document.createElement('button');
+    if (owned) {
+      btn.textContent = 'Possédé ✓';
+      btn.disabled = true;
+    } else if (myProfile.coins < item.price) {
+      btn.textContent = 'Pas assez de pièces';
+      btn.disabled = true;
+    } else {
+      btn.textContent = 'Acheter';
+      btn.addEventListener('click', () => socket.emit('buy-item', item.id));
+    }
+    row.appendChild(label);
+    row.appendChild(btn);
+    list.appendChild(row);
+  });
+}
+renderShopBox();
+
+document.getElementById('shop-toggle-btn').addEventListener('click', () => {
+  const box = document.getElementById('shop-box');
+  box.style.display = box.style.display === 'none' ? 'block' : 'none';
 });
+
+// Notes données au DJ actuel (musique / lumières / prestance), 1 à 5 étoiles
+// chacune. On peut renvoyer une note tant que le passage du DJ n'est pas fini.
+const ratingCriteria = [
+  { id: 'music', label: 'Musique' },
+  { id: 'lights', label: 'Lumières' },
+  { id: 'presence', label: 'Prestance' }
+];
+let myRatingValues = { music: 0, lights: 0, presence: 0 };
+let myRatingSubmitted = false;
+
+function renderRatingBox() {
+  const amIDJ = selfId && selfId === myDjId;
+  document.getElementById('rating-box').style.display = amIDJ ? 'none' : 'block';
+  if (amIDJ) return;
+
+  const rows = document.getElementById('rating-rows');
+  rows.innerHTML = '';
+  ratingCriteria.forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'star-row';
+    const label = document.createElement('label');
+    label.textContent = c.label;
+    const starsWrap = document.createElement('div');
+    starsWrap.className = 'stars';
+    for (let i = 1; i <= 5; i++) {
+      const star = document.createElement('span');
+      star.className = 'star' + (i <= myRatingValues[c.id] ? ' filled' : '');
+      star.textContent = '★';
+      star.addEventListener('click', () => {
+        myRatingValues[c.id] = i;
+        renderRatingBox();
+      });
+      starsWrap.appendChild(star);
+    }
+    row.appendChild(label);
+    row.appendChild(starsWrap);
+    rows.appendChild(row);
+  });
+
+  document.getElementById('rating-ack').style.display = myRatingSubmitted ? 'block' : 'none';
+}
+document.getElementById('rating-submit-btn').addEventListener('click', () => {
+  if (!myRatingValues.music || !myRatingValues.lights || !myRatingValues.presence) {
+    alert('Mets une note (1 à 5 étoiles) sur les trois critères avant d’envoyer.');
+    return;
+  }
+  socket.emit('rate-dj', myRatingValues);
+});
+renderRatingBox();
 
 document.getElementById('copy-btn').addEventListener('click', () => {
   const input = document.getElementById('invite-link');
@@ -2176,14 +2408,23 @@ function showSpeechBubble(playerId, color, text) {
 function positionBubble(entry) {
   const p = players[entry.playerId];
   if (!p) return; // le joueur est parti entre-temps : on laisse la bulle où elle était
+
+  // Si ce joueur a plusieurs bulles actives en même temps (nouveau message envoyé
+  // avant que le précédent ait disparu), on les empile verticalement au lieu de
+  // les superposer au même endroit : la plus récente reste à sa place habituelle,
+  // les plus anciennes remontent au-dessus, dans l'ordre où elles sont arrivées.
+  const samePlayerBubbles = activeBubbles.filter(b => b.playerId === entry.playerId);
+  const idx = samePlayerBubbles.indexOf(entry);
+  const stackOffset = (samePlayerBubbles.length - 1 - idx) * 34;
+
   if (entry.playerId === myDjId) {
     entry.el.style.left = (W / 2) + 'px';
-    entry.el.style.top = (H * 0.42 - 110) + 'px';
+    entry.el.style.top = (H * 0.42 - 110 - stackOffset) + 'px';
     return;
   }
   const scale = entry.playerId === selfId ? 1.05 : 0.9;
   entry.el.style.left = (p.x * W) + 'px';
-  entry.el.style.top = (p.y * H - 90 * scale) + 'px';
+  entry.el.style.top = (p.y * H - 90 * scale - stackOffset) + 'px';
 }
 
 function renderYoutubeControlsVisibility() {
@@ -2313,10 +2554,11 @@ window.onYouTubeIframeAPIReady = function () {
         }
       },
       onStateChange: (event) => {
-        // quand la vidéo se termine, si on est le DJ et que le mode file d'attente
+        // quand la vidéo se termine chez le DJ actuel : on solde toujours son
+        // passage (notes -> XP/pièces), et en plus, si le mode file d'attente
         // est actif, on passe automatiquement la main à la personne suivante
-        if (event.data === YT.PlayerState.ENDED && selfId === myDjId && djMode === 'queue') {
-          socket.emit('next-dj');
+        if (event.data === YT.PlayerState.ENDED && selfId === myDjId) {
+          socket.emit('video-ended');
         }
       }
     }
