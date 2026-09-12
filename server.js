@@ -1,0 +1,656 @@
+// Serveur avec plusieurs salles indépendantes + lecture vidéo YouTube synchronisée.
+// Aucune connexion (Spotify ou autre) n'est nécessaire : n'importe qui colle un
+// lien YouTube et tout le monde dans la salle regarde/écoute au même moment.
+//
+// Démarrage :
+//   npm install
+//   npm start
+// Puis ouvrir http://localhost:3000 : une nouvelle salle est créée automatiquement
+// et son lien s'affiche pour être partagé.
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+const PORT = process.env.PORT || 3000;
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Toutes les salles actives, indexées par leur code.
+// roomId -> { decor, players: { socketId -> {...} }, currentVideo }
+const rooms = new Map();
+
+// --- Profils persistants des joueurs (XP, pièces, objets achetés) ---
+// Identifiés par un "token" généré et gardé par chaque navigateur (localStorage),
+// PAS par un vrai compte : quelqu'un qui copie son token sur un autre appareil
+// partagerait le même profil, mais il n'y a pas de mot de passe à retenir.
+// Sauvegardés dans un simple fichier JSON : ça survit aux reconnexions et aux
+// redémarrages du serveur, mais pas à un redéploiement sur un hébergeur dont le
+// disque est réinitialisé à chaque déploiement (c'est le cas sur Render).
+const PROFILES_FILE = path.join(__dirname, 'data', 'profiles.json');
+let profiles = {};
+try {
+  if (fs.existsSync(PROFILES_FILE)) {
+    profiles = JSON.parse(fs.readFileSync(PROFILES_FILE, 'utf8'));
+  }
+} catch (e) {
+  console.error('Impossible de lire les profils sauvegardés :', e.message);
+  profiles = {};
+}
+let profileSaveScheduled = false;
+function scheduleSaveProfiles() {
+  if (profileSaveScheduled) return;
+  profileSaveScheduled = true;
+  setTimeout(() => {
+    profileSaveScheduled = false;
+    try {
+      fs.mkdirSync(path.dirname(PROFILES_FILE), { recursive: true });
+      fs.writeFileSync(PROFILES_FILE, JSON.stringify(profiles));
+    } catch (e) {
+      console.error('Impossible de sauvegarder les profils :', e.message);
+    }
+  }, 2000);
+}
+
+const XP_PER_LEVEL = 100;
+function levelForXp(xp) {
+  return 1 + Math.floor(xp / XP_PER_LEVEL);
+}
+
+function isValidToken(token) {
+  return typeof token === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(token);
+}
+
+function getOrCreateProfile(token) {
+  if (!profiles[token]) {
+    profiles[token] = {
+      xp: 0,
+      coins: 0,
+      ownedItems: [],
+      ratingSum: { music: 0, lights: 0, presence: 0 },
+      ratingsCount: 0
+    };
+  }
+  return profiles[token];
+}
+
+function publicProfile(token) {
+  const p = getOrCreateProfile(token);
+  return {
+    xp: p.xp,
+    coins: p.coins,
+    level: levelForXp(p.xp),
+    xpIntoLevel: p.xp % XP_PER_LEVEL,
+    xpPerLevel: XP_PER_LEVEL,
+    ownedItems: p.ownedItems,
+    avgRating: p.ratingsCount > 0 ? {
+      music: +(p.ratingSum.music / p.ratingsCount).toFixed(2),
+      lights: +(p.ratingSum.lights / p.ratingsCount).toFixed(2),
+      presence: +(p.ratingSum.presence / p.ratingsCount).toFixed(2)
+    } : null
+  };
+}
+
+// Catalogue de la boutique : objets cosmétiques achetables avec les pièces
+// gagnées en jouant. `slot: 'accessory'` réutilise le système d'accessoires
+// existant (aucun changement de valeur ne casse les accessoires gratuits).
+const SHOP_ITEMS = [
+  { id: 'acc_shades', slot: 'accessory', label: 'Lunettes de soleil', emoji: '😎', price: 30 },
+  { id: 'acc_halo', slot: 'accessory', label: 'Auréole', emoji: '😇', price: 60 },
+  { id: 'acc_wings', slot: 'accessory', label: 'Ailes', emoji: '🦋', price: 90 },
+  { id: 'acc_disco', slot: 'accessory', label: 'Masque disco', emoji: '🕺', price: 120 }
+];
+const shopItemsById = new Map(SHOP_ITEMS.map(item => [item.id, item]));
+const freeAccessories = ['none', 'cap', 'hat', 'buoy', 'costume'];
+
+function canUseAccessory(token, accessoryId) {
+  if (freeAccessories.includes(accessoryId)) return true;
+  const item = shopItemsById.get(accessoryId);
+  if (!item || item.slot !== 'accessory') return false;
+  const profile = getOrCreateProfile(token);
+  return profile.ownedItems.includes(accessoryId);
+}
+
+const palette = ['#ff5fa3', '#5ad1ff', '#c98bff', '#7ee08a', '#ff9f5a', '#ffd35a'];
+function colorFor(index) {
+  return palette[index % palette.length];
+}
+
+function generateRoomId() {
+  return crypto.randomBytes(3).toString('hex'); // ex: "a1b2c3"
+}
+
+function getOrCreateRoom(roomId) {
+  if (!rooms.has(roomId)) {
+    rooms.set(roomId, {
+      decor: 'mainstage',
+      players: {},
+      currentVideo: null,
+      creatorId: null,
+      djMode: 'fixed', // 'fixed' (le créateur reste DJ) ou 'queue' (file d'attente façon plug.dj)
+      djQueue: [],      // liste d'ids en attente de leur tour, en mode 'queue'
+      // Notes reçues par le DJ actuel pour son passage en cours : remises à zéro
+      // à chaque nouveau passage (cf. settleDjTurn).
+      currentDjTurn: { ratings: {}, settled: false },
+      lightEffects: {
+        flash: { on: false, color: '#ff5fa3' },
+        laser: { on: false, color: '#5ad1ff', count: 4, style: 'rotating' },
+        fireballs: { on: false, color: '#ff7a3d', count: 2 },
+        sparks: { on: false, color: '#ffd35a', count: 4, intensity: 0.6 },
+        discoball: { on: false, color: '#ffffff' },
+        power: 0.6,
+        speed: 1.0
+      }
+    });
+  }
+  return rooms.get(roomId);
+}
+
+function cleanupRoomIfEmpty(roomId) {
+  const room = rooms.get(roomId);
+  if (room && Object.keys(room.players).length === 0) {
+    rooms.delete(roomId);
+  }
+}
+
+const allowedAvatarTypes = ['human', 'robot', 'alien', 'ghost', 'dragon', 'blob'];
+const allowedAvatarColors = ['#ff5fa3', '#5ad1ff', '#ffd35a'];
+
+// Le token d'un joueur donne accès à son profil (XP/pièces/objets) : il ne doit
+// JAMAIS être envoyé aux autres clients, seulement gardé côté serveur et renvoyé
+// au joueur concerné lui-même (dans room-state, une seule fois, à sa connexion).
+function sanitizePlayerForClients(player) {
+  const { token, ...rest } = player;
+  return rest;
+}
+function sanitizePlayersForClients(players) {
+  const out = {};
+  for (const id of Object.keys(players)) out[id] = sanitizePlayerForClients(players[id]);
+  return out;
+}
+
+io.on('connection', (socket) => {
+  let currentRoomId = null;
+
+  socket.on('join-room', (payload) => {
+    if (currentRoomId) return;
+
+    // accepte l'ancien format (juste une chaîne = code de salle) et le nouveau
+    // format objet avec le choix d'avatar fait sur l'écran de sélection
+    const requestedRoomId = typeof payload === 'string' ? payload : (payload && payload.roomId);
+    const requestedAvatarType = payload && typeof payload === 'object' ? payload.avatarType : null;
+    const requestedAvatarColor = payload && typeof payload === 'object' ? payload.avatarColor : null;
+    const requestedName = payload && typeof payload === 'object' ? String(payload.name || '').trim().slice(0, 20) : '';
+    const requestedToken = payload && typeof payload === 'object' ? payload.token : null;
+    // Le token identifie le profil persistant (XP/pièces/objets) de ce navigateur.
+    // S'il est absent ou invalide (première visite, ancien client...), on en génère
+    // un nouveau et on le renvoie au client pour qu'il le garde en mémoire.
+    const token = isValidToken(requestedToken) ? requestedToken : crypto.randomUUID();
+
+    currentRoomId = requestedRoomId && String(requestedRoomId).trim()
+      ? String(requestedRoomId).trim().slice(0, 20)
+      : generateRoomId();
+
+    const room = getOrCreateRoom(currentRoomId);
+    socket.join(currentRoomId);
+
+    const isFirstInRoom = Object.keys(room.players).length === 0;
+    if (isFirstInRoom) {
+      room.djId = socket.id; // le premier arrivant devient le DJ de la salle
+      room.creatorId = socket.id; // lui seul pourra choisir le mode DJ unique / file d'attente
+    }
+
+    const playerIndex = Object.keys(room.players).length;
+    const player = {
+      name: requestedName || ('Joueur ' + (playerIndex + 1)),
+      x: 0.5,
+      y: 0.6,
+      pose: isFirstInRoom ? 'dj_behind' : 'idle',
+      accessory: 'none',
+      color: colorFor(playerIndex),
+      avatarType: allowedAvatarTypes.includes(requestedAvatarType) ? requestedAvatarType : 'human',
+      avatarColor: allowedAvatarColors.includes(requestedAvatarColor) ? requestedAvatarColor : allowedAvatarColors[0],
+      bubbleStyle: 'plain',       // décor de bulle choisi (festivaliers uniquement)
+      bubbleSize: isFirstInRoom ? 1.2 : 1.0, // taille de bulle (réglable par le DJ seulement)
+      token
+    };
+    room.players[socket.id] = player;
+
+    socket.emit('room-state', {
+      roomId: currentRoomId,
+      decor: room.decor,
+      players: sanitizePlayersForClients(room.players),
+      currentVideo: room.currentVideo,
+      djId: room.djId,
+      creatorId: room.creatorId,
+      djMode: room.djMode,
+      djQueue: room.djQueue,
+      lightEffects: room.lightEffects,
+      selfId: socket.id,
+      token,
+      profile: publicProfile(token),
+      shopCatalog: SHOP_ITEMS
+    });
+
+    socket.to(currentRoomId).emit('player-joined', { id: socket.id, player: sanitizePlayerForClients(player) });
+  });
+
+  socket.on('move', (pos) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p) return;
+    p.x = clamp(pos.x, 0, 1);
+    p.y = clamp(pos.y, 0, 1);
+    socket.to(currentRoomId).emit('player-moved', { id: socket.id, x: p.x, y: p.y });
+  });
+
+  socket.on('pose', (pose) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p) return;
+    p.pose = String(pose).slice(0, 30);
+    io.to(currentRoomId).emit('player-posed', { id: socket.id, pose: p.pose });
+  });
+
+  socket.on('accessory', (accessory) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p) return;
+    const requested = String(accessory).slice(0, 30);
+    if (!canUseAccessory(p.token, requested)) return; // objet payant non possédé : on ignore
+    p.accessory = requested;
+    io.to(currentRoomId).emit('player-accessory', { id: socket.id, accessory: p.accessory });
+  });
+
+  // Décor de bulle : réservé aux festivaliers (pas au DJ, qui a déjà sa bulle spéciale)
+  const allowedBubbleStyles = ['plain', 'dashed', 'stars'];
+  socket.on('bubble-style', (style) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p || socket.id === room.djId) return;
+    if (!allowedBubbleStyles.includes(style)) return;
+    p.bubbleStyle = style;
+    io.to(currentRoomId).emit('player-bubble-style', { id: socket.id, style: p.bubbleStyle });
+  });
+
+  // Taille de bulle : réservée au DJ, dans une limite raisonnable
+  socket.on('bubble-size', (size) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p || socket.id !== room.djId) return;
+    const clamped = Math.max(1.0, Math.min(1.6, Number(size) || 1.2));
+    p.bubbleSize = clamped;
+    io.to(currentRoomId).emit('player-bubble-size', { id: socket.id, size: p.bubbleSize });
+  });
+
+  // Le créateur de la salle choisit : DJ unique (par défaut) ou file d'attente façon plug.dj
+  socket.on('set-dj-mode', (mode) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || socket.id !== room.creatorId) return;
+    room.djMode = mode === 'queue' ? 'queue' : 'fixed';
+    if (room.djMode === 'fixed') room.djQueue = [];
+    io.to(currentRoomId).emit('dj-mode-changed', { mode: room.djMode, queue: room.djQueue });
+  });
+
+  socket.on('join-dj-queue', () => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || room.djMode !== 'queue') return;
+    if (socket.id === room.djId) return; // déjà DJ, pas besoin de faire la queue
+    if (!room.djQueue.includes(socket.id)) room.djQueue.push(socket.id);
+    io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
+  });
+
+  socket.on('leave-dj-queue', () => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room) return;
+    room.djQueue = room.djQueue.filter(id => id !== socket.id);
+    io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
+  });
+
+  // Le DJ actuel décide de passer la main tout de suite (bouton "Passer la main") :
+  // on solde d'abord son passage (notes -> XP/pièces), puis on avance la file.
+  socket.on('next-dj', () => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || room.djMode !== 'queue' || socket.id !== room.djId) return;
+    settleDjTurn(room, currentRoomId);
+    advanceDjQueue(room, currentRoomId);
+  });
+
+  // Une vidéo vient de se terminer chez le DJ actuel : on solde son passage dans
+  // tous les cas (même en mode DJ unique, où il reste DJ mais touche quand même
+  // la récompense de ce morceau), et on avance la file seulement en mode 'queue'.
+  socket.on('video-ended', () => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || socket.id !== room.djId) return;
+    settleDjTurn(room, currentRoomId);
+    if (room.djMode === 'queue') advanceDjQueue(room, currentRoomId);
+  });
+
+  // Note laissée par un festivalier (pas le DJ actuel) sur le passage en cours.
+  // On peut renvoyer une note pour la mettre à jour tant que le passage n'est
+  // pas encore soldé.
+  socket.on('rate-dj', (payload) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!room || !p || socket.id === room.djId) return;
+    const clampRating = (v) => {
+      const n = Math.round(Number(v));
+      return Number.isFinite(n) ? Math.max(1, Math.min(5, n)) : null;
+    };
+    const music = clampRating(payload && payload.music);
+    const lights = clampRating(payload && payload.lights);
+    const presence = clampRating(payload && payload.presence);
+    if (music === null || lights === null || presence === null) return;
+    room.currentDjTurn.ratings[socket.id] = { music, lights, presence };
+    socket.emit('rate-dj-ack');
+  });
+
+  // Achat d'un objet de la boutique avec les pièces gagnées en jouant.
+  socket.on('buy-item', (itemId) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p) return;
+    const item = shopItemsById.get(String(itemId));
+    if (!item) return;
+    const profile = getOrCreateProfile(p.token);
+    if (profile.ownedItems.includes(item.id)) return; // déjà possédé
+    if (profile.coins < item.price) return; // pas assez de pièces
+    profile.coins -= item.price;
+    profile.ownedItems.push(item.id);
+    scheduleSaveProfiles();
+    socket.emit('profile-updated', publicProfile(p.token));
+  });
+
+  socket.on('chat', (text) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p) return;
+    const clean = String(text).slice(0, 140).trim();
+    if (!clean) return;
+    io.to(currentRoomId).emit('chat-message', { id: socket.id, name: p.name, color: p.color, text: clean });
+  });
+
+  // Permet à chaque client d'estimer l'écart entre son horloge et celle du
+  // serveur, pour que le "top départ" des vidéos soit fiable même si l'heure
+  // système d'un appareil est décalée.
+  socket.on('time-sync', (_, callback) => {
+    if (typeof callback === 'function') callback(Date.now());
+  });
+
+  // Un joueur colle un lien YouTube : le serveur donne un "top départ" commun
+  // (quelques secondes dans le futur) pour que chaque lecteur démarre en même temps.
+  // Réservé au DJ actuel de la salle.
+  socket.on('play-video', ({ videoId, title }) => {
+    if (!currentRoomId || !videoId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || socket.id !== room.djId) return;
+    room.currentVideo = {
+      videoId,
+      title: String(title || '').slice(0, 100),
+      paused: false,
+      positionSec: 0,
+      anchorAt: Date.now() + 6000 // 6 secondes de marge avant le vrai départ
+    };
+    io.to(currentRoomId).emit('video-state', room.currentVideo);
+  });
+
+  // Contrôle de lecture (pause, reprise, avance/retour) : réservé au DJ actuel,
+  // comme une vraie régie que lui seul manie.
+  socket.on('video-control', ({ action, positionSec }) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || socket.id !== room.djId) return;
+    const cv = room.currentVideo;
+    if (!cv) return;
+
+    const actualPos = cv.paused
+      ? cv.positionSec
+      : cv.positionSec + Math.max(0, Date.now() - cv.anchorAt) / 1000;
+
+    if (action === 'pause') {
+      cv.paused = true;
+      cv.positionSec = positionSec != null ? positionSec : actualPos;
+    } else if (action === 'play') {
+      cv.paused = false;
+      cv.positionSec = positionSec != null ? positionSec : actualPos;
+      cv.anchorAt = Date.now();
+    } else if (action === 'seek') {
+      cv.positionSec = Math.max(0, positionSec);
+      if (!cv.paused) cv.anchorAt = Date.now();
+    } else {
+      return;
+    }
+
+    io.to(currentRoomId).emit('video-state', cv);
+  });
+
+  // Décor de scène : réservé au DJ actuel, comme le reste de la régie
+  socket.on('decor', (decor) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || socket.id !== room.djId) return;
+    room.decor = String(decor).slice(0, 30);
+    io.to(currentRoomId).emit('decor-changed', room.decor);
+  });
+
+  // Effets lumineux : réservés au DJ, comme le reste de la régie.
+  // On reçoit l'état complet à chaque changement (case cochée, curseur bougé, couleur choisie).
+  socket.on('set-light-effects', (payload) => {
+    if (!currentRoomId || !payload) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || socket.id !== room.djId) return;
+    room.lightEffects = sanitizeLightEffects(payload, room.lightEffects);
+    io.to(currentRoomId).emit('light-effects-changed', room.lightEffects);
+  });
+
+  socket.on('disconnect', () => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (room) {
+      // si le DJ partait, on solde son passage (notes -> XP/pièces) AVANT de
+      // supprimer son profil de joueur de la salle, sinon on perdrait son token
+      if (room.djId === socket.id) settleDjTurn(room, currentRoomId);
+
+      delete room.players[socket.id];
+      room.djQueue = room.djQueue.filter(id => id !== socket.id);
+      io.to(currentRoomId).emit('player-left', { id: socket.id });
+
+      // si le DJ partait, on transmet le rôle : à la file d'attente si elle existe,
+      // sinon à n'importe qui d'autre encore présent
+      if (room.djId === socket.id) {
+        const advanced = room.djMode === 'queue' && advanceDjQueue(room, currentRoomId);
+        if (!advanced) {
+          const remainingIds = Object.keys(room.players);
+          room.djId = remainingIds.length > 0 ? remainingIds[0] : null;
+          if (room.djId) {
+            room.players[room.djId].bubbleSize = Math.max(room.players[room.djId].bubbleSize, 1.2);
+            room.players[room.djId].pose = 'dj_behind';
+            io.to(currentRoomId).emit('dj-changed', room.djId);
+            io.to(currentRoomId).emit('player-posed', { id: room.djId, pose: 'dj_behind' });
+          }
+        }
+      }
+
+      // si le créateur partait, la salle n'a plus personne pour changer le mode DJ —
+      // ce n'est pas grave, le mode déjà choisi continue de s'appliquer tel quel
+
+      cleanupRoomIfEmpty(currentRoomId);
+    }
+  });
+});
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+const validLaserStyles = ['rotating', 'fan', 'cross'];
+function isHexColor(c) {
+  return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
+}
+function sanitizeLightEffects(payload, previous) {
+  const power = Number(payload.power);
+  const speed = Number(payload.speed);
+  const laserIn = payload.laser || {};
+  const laserCountRaw = Math.round(Number(laserIn.count));
+  const sparksIn = payload.sparks || {};
+  const sparksCountRaw = Math.round(Number(sparksIn.count));
+  const sparksIntensity = Number(sparksIn.intensity);
+  const fireballsIn = payload.fireballs || {};
+  const validFireballsCounts = [2, 4, 6, 8];
+  const fireballsCountRaw = Math.round(Number(fireballsIn.count));
+  return {
+    flash: {
+      on: !!(payload.flash && payload.flash.on),
+      color: isHexColor(payload.flash && payload.flash.color) ? payload.flash.color : previous.flash.color
+    },
+    laser: {
+      on: !!laserIn.on,
+      color: isHexColor(laserIn.color) ? laserIn.color : previous.laser.color,
+      count: Number.isFinite(laserCountRaw) ? clamp(laserCountRaw, 1, 8) : previous.laser.count,
+      style: validLaserStyles.includes(laserIn.style) ? laserIn.style : previous.laser.style
+    },
+    fireballs: {
+      on: !!fireballsIn.on,
+      color: isHexColor(fireballsIn.color) ? fireballsIn.color : previous.fireballs.color,
+      count: validFireballsCounts.includes(fireballsCountRaw) ? fireballsCountRaw : (previous.fireballs.count || 2)
+    },
+    sparks: {
+      on: !!sparksIn.on,
+      color: isHexColor(sparksIn.color) ? sparksIn.color : previous.sparks.color,
+      count: Number.isFinite(sparksCountRaw) ? clamp(sparksCountRaw, 4, 10) : previous.sparks.count,
+      intensity: Number.isFinite(sparksIntensity) ? clamp(sparksIntensity, 0, 1) : previous.sparks.intensity
+    },
+    discoball: {
+      on: !!(payload.discoball && payload.discoball.on),
+      color: isHexColor(payload.discoball && payload.discoball.color) ? payload.discoball.color : previous.discoball.color
+    },
+    power: Number.isFinite(power) ? clamp(power, 0, 1) : previous.power,
+    speed: Number.isFinite(speed) ? clamp(speed, 0.3, 2.5) : previous.speed
+  };
+}
+
+// Fait passer la main au prochain de la file d'attente, s'il y en a un.
+// Retourne true si un changement de DJ a eu lieu.
+// Calcule la récompense du passage DJ qui vient de se terminer à partir des
+// notes reçues (musique / lumières / prestance), crédite le profil du DJ
+// sortant et un petit bonus aux festivaliers qui ont pris le temps de noter,
+// prévient tout le monde du résultat, puis remet les notes à zéro pour le
+// passage suivant. Ne fait rien si ce passage a déjà été soldé (protège contre
+// un double déclenchement, ex. "passer la main" juste après la fin de vidéo).
+function settleDjTurn(room, roomId) {
+  const turn = room.currentDjTurn;
+  if (!turn || turn.settled) return;
+  turn.settled = true;
+
+  const djPlayer = room.players[room.djId];
+  const ratingEntries = Object.values(turn.ratings);
+  const ratingsCount = ratingEntries.length;
+
+  let avg = null;
+  if (ratingsCount > 0) {
+    const sum = ratingEntries.reduce((acc, r) => ({
+      music: acc.music + r.music,
+      lights: acc.lights + r.lights,
+      presence: acc.presence + r.presence
+    }), { music: 0, lights: 0, presence: 0 });
+    avg = {
+      music: sum.music / ratingsCount,
+      lights: sum.lights / ratingsCount,
+      presence: sum.presence / ratingsCount
+    };
+  }
+  const overallAvg = avg ? (avg.music + avg.lights + avg.presence) / 3 : null;
+
+  const BASE_XP = 20, BASE_COINS = 10;
+  // Sans aucune note, petite récompense de consolation. Avec des notes, la
+  // récompense va d'environ 0.5x (notes très basses) à ~1.7x (notes parfaites).
+  const rewardMultiplier = overallAvg !== null ? (0.5 + overallAvg / 3) : 0.5;
+  const xpGain = Math.round(BASE_XP * rewardMultiplier);
+  const coinsGain = Math.round(BASE_COINS * rewardMultiplier);
+
+  let djResult = null;
+  if (djPlayer && djPlayer.token) {
+    const profile = getOrCreateProfile(djPlayer.token);
+    const levelBefore = levelForXp(profile.xp);
+    profile.xp += xpGain;
+    profile.coins += coinsGain;
+    if (avg) {
+      profile.ratingSum.music += avg.music;
+      profile.ratingSum.lights += avg.lights;
+      profile.ratingSum.presence += avg.presence;
+      profile.ratingsCount += 1;
+    }
+    const levelAfter = levelForXp(profile.xp);
+    djResult = {
+      name: djPlayer.name,
+      xpGain,
+      coinsGain,
+      avgRating: avg,
+      ratersCount: ratingsCount,
+      level: levelAfter,
+      leveledUp: levelAfter > levelBefore
+    };
+    io.to(room.djId).emit('profile-updated', publicProfile(djPlayer.token));
+  }
+
+  // Petit bonus de participation pour ceux qui ont pris le temps de noter.
+  for (const raterId of Object.keys(turn.ratings)) {
+    const rater = room.players[raterId];
+    if (!rater || !rater.token) continue;
+    const raterProfile = getOrCreateProfile(rater.token);
+    raterProfile.xp += 2;
+    raterProfile.coins += 1;
+    io.to(raterId).emit('profile-updated', publicProfile(rater.token));
+  }
+
+  if (djResult) io.to(roomId).emit('dj-turn-result', djResult);
+
+  scheduleSaveProfiles();
+  room.currentDjTurn = { ratings: {}, settled: false };
+}
+
+function advanceDjQueue(room, roomId) {
+  if (room.djQueue.length === 0) return false;
+  const previousDjId = room.djId;
+  const nextDjId = room.djQueue.shift();
+  room.djId = nextDjId;
+
+  // l'ancien DJ redevient un festivalier normal, le nouveau prend sa place sur scène
+  if (room.players[previousDjId]) {
+    room.players[previousDjId].pose = 'idle';
+    io.to(roomId).emit('player-posed', { id: previousDjId, pose: 'idle' });
+  }
+  if (room.players[nextDjId]) {
+    room.players[nextDjId].pose = 'dj_behind';
+    room.players[nextDjId].bubbleSize = Math.max(room.players[nextDjId].bubbleSize || 1.0, 1.2);
+    io.to(roomId).emit('player-posed', { id: nextDjId, pose: 'dj_behind' });
+  }
+
+  io.to(roomId).emit('dj-changed', room.djId);
+  io.to(roomId).emit('dj-queue-changed', room.djQueue);
+  return true;
+}
+
+server.listen(PORT, () => {
+  console.log(`Serveur prêt sur http://localhost:${PORT}`);
+});
