@@ -141,9 +141,55 @@
   }
   .bubble-deco.left { left: -6px; }
   .bubble-deco.right { right: -6px; }
+
+  #avatar-select-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(8,6,12,0.96);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #avatar-select-panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 24px 28px; width: 320px; text-align: center;
+  }
+  #avatar-select-panel h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  #avatar-select-panel p.sub { font-size: 12px; color: var(--muted); margin: 0 0 16px; }
+  #avatar-nav { display: flex; align-items: center; justify-content: center; gap: 12px; }
+  #avatar-preview-canvas { background: #0d0a14; border-radius: 12px; }
+  .avatar-arrow {
+    background: #1d1829; border: 1px solid var(--line); color: var(--text);
+    width: 36px; height: 36px; border-radius: 50%; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #avatar-type-label { font-size: 13px; color: var(--text); margin: 10px 0 14px; }
+  #avatar-color-row { display: flex; gap: 10px; justify-content: center; margin-bottom: 18px; }
+  .avatar-color-swatch {
+    width: 30px; height: 30px; border-radius: 8px; cursor: pointer; border: 3px solid transparent;
+  }
+  .avatar-color-swatch.selected { border-color: #fff; }
+  #avatar-confirm-btn {
+    width: 100%; background: var(--accent); border: none; color: #2a0b18;
+    font-weight: 700; font-size: 14px; border-radius: 10px; padding: 12px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
+
+<div id="avatar-select-overlay">
+  <div id="avatar-select-panel">
+    <h1>Choisis ton avatar</h1>
+    <p class="sub">Utilise les flèches pour changer de personnage, et choisis sa couleur.</p>
+    <div id="avatar-nav">
+      <div class="avatar-arrow" id="avatar-prev-btn">◀</div>
+      <canvas id="avatar-preview-canvas" width="180" height="220"></canvas>
+      <div class="avatar-arrow" id="avatar-next-btn">▶</div>
+    </div>
+    <div id="avatar-type-label">Festivalier</div>
+    <div id="avatar-color-row"></div>
+    <input id="avatar-name-input" type="text" placeholder="Ton pseudo" maxlength="20"
+      style="width:100%; box-sizing:border-box; background:#1d1829; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:10px; font-size:13px; margin-bottom:14px; text-align:center;">
+    <button id="avatar-confirm-btn">Entrer dans la salle</button>
+  </div>
+</div>
 
 <canvas id="stage"></canvas>
 <div id="bubble-layer" style="position:fixed; inset:0; z-index:25; pointer-events:none;"></div>
@@ -224,12 +270,73 @@ let myDjId = null;
 let myCreatorId = null;
 let djMode = 'fixed';
 let djQueue = [];
+let avatarConfirmed = false;
+
+// --- écran de sélection d'avatar (obligatoire avant d'entrer dans la salle) ---
+const avatarTypes = ['human', 'robot', 'alien', 'ghost', 'dragon', 'blob'];
+const avatarTypeLabels = {
+  human: 'Festivalier', robot: 'Robot', alien: 'Alien',
+  ghost: 'Fantôme', dragon: 'Dragonnet', blob: 'Blob'
+};
+const avatarColorChoices = ['#ff5fa3', '#5ad1ff', '#ffd35a'];
+let avatarTypeIndex = 0;
+let avatarColorIndex = 0;
+
+const avatarPreviewCanvas = document.getElementById('avatar-preview-canvas');
+const avatarPreviewCtx = avatarPreviewCanvas.getContext('2d');
+
+const colorRow = document.getElementById('avatar-color-row');
+avatarColorChoices.forEach((color, i) => {
+  const sw = document.createElement('div');
+  sw.className = 'avatar-color-swatch' + (i === 0 ? ' selected' : '');
+  sw.style.background = color;
+  sw.addEventListener('click', () => {
+    avatarColorIndex = i;
+    colorRow.querySelectorAll('.avatar-color-swatch').forEach(s => s.classList.remove('selected'));
+    sw.classList.add('selected');
+  });
+  colorRow.appendChild(sw);
+});
+
+document.getElementById('avatar-prev-btn').addEventListener('click', () => {
+  avatarTypeIndex = (avatarTypeIndex - 1 + avatarTypes.length) % avatarTypes.length;
+  updateAvatarTypeLabel();
+});
+document.getElementById('avatar-next-btn').addEventListener('click', () => {
+  avatarTypeIndex = (avatarTypeIndex + 1) % avatarTypes.length;
+  updateAvatarTypeLabel();
+});
+function updateAvatarTypeLabel() {
+  document.getElementById('avatar-type-label').textContent = avatarTypeLabels[avatarTypes[avatarTypeIndex]];
+}
+
+document.getElementById('avatar-confirm-btn').addEventListener('click', () => {
+  avatarConfirmed = true;
+  document.getElementById('avatar-select-overlay').remove();
+  const chosenName = document.getElementById('avatar-name-input').value.trim();
+  socket.emit('join-room', {
+    roomId: requestedRoom,
+    avatarType: avatarTypes[avatarTypeIndex],
+    avatarColor: avatarColorChoices[avatarColorIndex],
+    name: chosenName
+  });
+});
+
+function avatarPreviewLoop(t) {
+  avatarPreviewCtx.clearRect(0, 0, 180, 220);
+  drawAvatarByType(
+    avatarPreviewCtx, 90, 170, 2.1,
+    avatarTypes[avatarTypeIndex], 'idle', 'none',
+    avatarColorChoices[avatarColorIndex], false, t
+  );
+  requestAnimationFrame(avatarPreviewLoop);
+}
+requestAnimationFrame(avatarPreviewLoop);
 
 const urlParams = new URLSearchParams(window.location.search);
 const requestedRoom = urlParams.get('room') || '';
 
 socket.on('connect', () => {
-  socket.emit('join-room', requestedRoom);
   syncClock();
 });
 socket.on('disconnect', () => { statusEl.textContent = 'Déconnecté'; statusEl.className = 'off'; });
@@ -406,6 +513,7 @@ window.addEventListener('keydown', e => { keys[e.key] = true; });
 window.addEventListener('keyup', e => { keys[e.key] = false; });
 let myX = 0.5, myY = 0.6;
 function updateMovement() {
+  if (!avatarConfirmed) return;
   const speed = 0.006;
   if (keys['ArrowLeft']) myX -= speed;
   if (keys['ArrowRight']) myX += speed;
@@ -458,13 +566,35 @@ function drawPlayer(p, isMe, t) {
   const scale = isMe ? 1.05 : 0.9;
   const move = p.pose || 'idle';
   const accessory = p.accessory || 'none';
-  const shirtColor = p.color || '#8d84a3';
-  const pantsColor = '#2a2438';
+  const color = p.avatarColor || p.color || '#8d84a3';
 
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.scale(scale, scale);
+  drawAvatarByType(ctx, cx, cy, scale, p.avatarType || 'human', move, accessory, color, isMe, t);
 
+  // nom au-dessus
+  ctx.fillStyle = '#e9e4f2';
+  ctx.font = '11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(p.name || '', cx, cy - 78 * scale);
+}
+
+// Dispatche vers le bon dessin selon le type d'avatar choisi à l'entrée.
+// Utilisé à la fois par le rendu du jeu et par l'aperçu de l'écran de sélection.
+function drawAvatarByType(c, cx, cy, scale, avatarType, move, accessory, color, isMe, t) {
+  c.save();
+  c.translate(cx, cy);
+  c.scale(scale, scale);
+
+  if (avatarType === 'robot') drawRobotBody(c, move, accessory, color, isMe, t);
+  else if (avatarType === 'alien') drawAlienBody(c, move, accessory, color, isMe, t);
+  else if (avatarType === 'ghost') drawGhostBody(c, move, accessory, color, isMe, t);
+  else if (avatarType === 'dragon') drawDragonBody(c, move, accessory, color, isMe, t);
+  else if (avatarType === 'blob') drawBlobBody(c, move, accessory, color, isMe, t);
+  else drawHumanBody(c, move, accessory, color, isMe, t);
+
+  c.restore();
+}
+
+function motionFor(move, t) {
   let armAngle = 0.3, armLift = 0, bob = 0, sway = 0, legSpread = 6;
   if (move === 'idle') { bob = Math.sin(t / 600) * 2; sway = Math.sin(t / 800) * 2; }
   else if (move === 'hands_up') { armLift = 1; bob = Math.abs(Math.sin(t / 260)) * 7; }
@@ -472,48 +602,66 @@ function drawPlayer(p, isMe, t) {
   else if (move === 'clap') { armLift = 0.75; armAngle = 1.0; bob = Math.abs(Math.sin(t / 240)) * 5; }
   else if (move === 'dance1') { sway = Math.sin(t / 300) * 18; armAngle = 0.5 + Math.sin(t / 300) * 0.4; bob = Math.abs(Math.sin(t / 300)) * 6; }
   else if (move === 'dance2') { sway = Math.sin(t / 200) * 10; armLift = (Math.sin(t / 200) + 1) / 2; bob = Math.abs(Math.cos(t / 200)) * 10; legSpread = 7 + Math.sin(t / 200) * 3; }
+  return { armAngle, armLift, bob, sway, legSpread };
+}
 
-  ctx.translate(sway, -bob);
+function drawShadow(c, sway, bob) {
+  c.save();
+  c.translate(-sway, bob);
+  c.fillStyle = 'rgba(0,0,0,0.42)';
+  c.beginPath();
+  c.ellipse(0, 46, 20, 6, 0, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+}
 
-  ctx.save();
-  ctx.translate(-sway, bob);
-  ctx.fillStyle = 'rgba(0,0,0,0.42)';
-  ctx.beginPath();
-  ctx.ellipse(0, 46, 20, 6, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+function drawSelfRing(c, isMe, cy, r) {
+  if (!isMe) return;
+  c.strokeStyle = '#fff';
+  c.lineWidth = 3;
+  c.beginPath();
+  c.arc(0, cy, r, 0, Math.PI * 2);
+  c.stroke();
+}
 
-  ctx.fillStyle = pantsColor;
-  roundRect(ctx, -13, 16, 10, 20, 4);
-  roundRect(ctx, 3, 16, 10, 20, 4);
-  ctx.fill();
-  ctx.fillStyle = '#1c1626';
-  roundRect(ctx, -14, 33, 12, 7, 3);
-  roundRect(ctx, 2, 33, 12, 7, 3);
-  ctx.fill();
+// --- avatar "Festivalier" (humain, vu de dos) ---
+function drawHumanBody(c, move, accessory, color, isMe, t) {
+  const { armAngle, armLift, bob, sway, legSpread } = motionFor(move, t);
+  c.translate(sway, -bob);
+  drawShadow(c, sway, bob);
 
-  ctx.fillStyle = shirtColor;
-  roundRect(ctx, -17, -18, 34, 38, 12);
-  ctx.fill();
+  const pantsColor = '#2a2438';
+  c.fillStyle = pantsColor;
+  roundRect(c, -13, 16, 10, 20, 4);
+  roundRect(c, 3, 16, 10, 20, 4);
+  c.fill();
+  c.fillStyle = '#1c1626';
+  roundRect(c, -14, 33, 12, 7, 3);
+  roundRect(c, 2, 33, 12, 7, 3);
+  c.fill();
+
+  c.fillStyle = color;
+  roundRect(c, -17, -18, 34, 38, 12);
+  c.fill();
 
   if (accessory === 'costume') {
-    ctx.strokeStyle = '#ff5fa3';
-    ctx.lineWidth = 2;
-    roundRect(ctx, -17, -18, 34, 38, 12);
-    ctx.stroke();
+    c.strokeStyle = '#ff5fa3';
+    c.lineWidth = 2;
+    roundRect(c, -17, -18, 34, 38, 12);
+    c.stroke();
   }
   if (accessory === 'buoy') {
-    ctx.strokeStyle = '#ff8a3d';
-    ctx.lineWidth = 10;
-    ctx.beginPath();
-    ctx.ellipse(0, 10, 22, 10, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = '#ffd08a';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(0, 10, 22, 10, 0, 0.3, 1.2);
-    ctx.ellipse(0, 10, 22, 10, 0, 2.0, 2.9);
-    ctx.stroke();
+    c.strokeStyle = '#ff8a3d';
+    c.lineWidth = 10;
+    c.beginPath();
+    c.ellipse(0, 10, 22, 10, 0, 0, Math.PI * 2);
+    c.stroke();
+    c.strokeStyle = '#ffd08a';
+    c.lineWidth = 3;
+    c.beginPath();
+    c.ellipse(0, 10, 22, 10, 0, 0.3, 1.2);
+    c.ellipse(0, 10, 22, 10, 0, 2.0, 2.9);
+    c.stroke();
   }
 
   const shoulderY = -10, armLen = 24;
@@ -522,67 +670,360 @@ function drawPlayer(p, isMe, t) {
   let rx = 16 + Math.cos(angle) * armLen, ry = shoulderY - Math.sin(angle) * armLen;
   if (move === 'clap') { rx = lx + 6; ry = ly; }
 
-  ctx.strokeStyle = shirtColor;
-  ctx.lineWidth = 9;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(-16, shoulderY); ctx.lineTo(lx, ly);
-  ctx.moveTo(16, shoulderY); ctx.lineTo(rx, ry);
-  ctx.stroke();
+  c.strokeStyle = color;
+  c.lineWidth = 9;
+  c.lineCap = 'round';
+  c.beginPath();
+  c.moveTo(-16, shoulderY); c.lineTo(lx, ly);
+  c.moveTo(16, shoulderY); c.lineTo(rx, ry);
+  c.stroke();
 
   const skinTone = '#f0cca3';
-  ctx.fillStyle = skinTone;
-  ctx.beginPath();
-  ctx.arc(lx, ly, 6.5, 0, Math.PI * 2);
-  ctx.arc(rx, ry, 6.5, 0, Math.PI * 2);
-  ctx.fill();
+  c.fillStyle = skinTone;
+  c.beginPath();
+  c.arc(lx, ly, 6.5, 0, Math.PI * 2);
+  c.arc(rx, ry, 6.5, 0, Math.PI * 2);
+  c.fill();
 
-  ctx.fillStyle = skinTone;
-  ctx.beginPath();
-  ctx.arc(0, -32, 17, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#241c30';
-  ctx.beginPath();
-  ctx.arc(0, -34, 17.6, Math.PI * 0.02, Math.PI * 0.98);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = skinTone;
-  ctx.beginPath();
-  ctx.arc(-16, -28, 3.2, 0, Math.PI * 2);
-  ctx.arc(16, -28, 3.2, 0, Math.PI * 2);
-  ctx.fill();
+  c.fillStyle = skinTone;
+  c.beginPath();
+  c.arc(0, -32, 17, 0, Math.PI * 2);
+  c.fill();
+  c.fillStyle = '#241c30';
+  c.beginPath();
+  c.arc(0, -34, 17.6, Math.PI * 0.02, Math.PI * 0.98);
+  c.closePath();
+  c.fill();
+  c.fillStyle = skinTone;
+  c.beginPath();
+  c.arc(-16, -28, 3.2, 0, Math.PI * 2);
+  c.arc(16, -28, 3.2, 0, Math.PI * 2);
+  c.fill();
 
   if (accessory === 'cap') {
-    ctx.fillStyle = '#2f9e6b';
-    ctx.beginPath();
-    ctx.arc(0, -35, 18.2, Math.PI * 0.85, Math.PI * 2.15);
-    ctx.fill();
-    ctx.fillRect(-6, -19, 12, 5);
+    c.fillStyle = '#2f9e6b';
+    c.beginPath();
+    c.arc(0, -35, 18.2, Math.PI * 0.85, Math.PI * 2.15);
+    c.fill();
+    c.fillRect(-6, -19, 12, 5);
   } else if (accessory === 'hat') {
-    ctx.fillStyle = '#caa25a';
-    ctx.beginPath();
-    ctx.ellipse(0, -40, 25, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(0, -47, 12, Math.PI, Math.PI * 2);
-    ctx.fill();
+    c.fillStyle = '#caa25a';
+    c.beginPath();
+    c.ellipse(0, -40, 25, 6, 0, 0, Math.PI * 2);
+    c.fill();
+    c.beginPath();
+    c.arc(0, -47, 12, Math.PI, Math.PI * 2);
+    c.fill();
   }
 
-  if (isMe) {
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(0, -32, 23, 0, Math.PI * 2);
-    ctx.stroke();
+  drawSelfRing(c, isMe, -32, 23);
+}
+
+// --- avatar "Robot" : corps carré, une antenne, un œil rond ---
+function drawRobotBody(c, move, accessory, color, isMe, t) {
+  const { armLift, bob, sway, legSpread } = motionFor(move, t);
+  c.translate(sway, -bob);
+  drawShadow(c, sway, bob);
+
+  // jambes bloc
+  c.fillStyle = '#3a3a44';
+  roundRect(c, -13 - (legSpread - 6), 18, 10, 18, 3);
+  roundRect(c, 3 + (legSpread - 6), 18, 10, 18, 3);
+  c.fill();
+
+  // corps
+  c.fillStyle = color;
+  roundRect(c, -19, -16, 38, 38, 8);
+  c.fill();
+  c.strokeStyle = 'rgba(255,255,255,0.25)';
+  c.lineWidth = 2;
+  roundRect(c, -19, -16, 38, 38, 8);
+  c.stroke();
+
+  // bras (blocs qui se lèvent)
+  const armY = -6 - armLift * 22;
+  c.fillStyle = '#3a3a44';
+  roundRect(c, -30, armY, 10, 20, 4);
+  roundRect(c, 20, armY, 10, 20, 4);
+  c.fill();
+
+  // tête
+  c.fillStyle = '#3a3a44';
+  roundRect(c, -16, -46, 32, 26, 8);
+  c.fill();
+  // antenne
+  c.strokeStyle = '#3a3a44';
+  c.lineWidth = 3;
+  c.beginPath();
+  c.moveTo(0, -46); c.lineTo(0, -56);
+  c.stroke();
+  c.fillStyle = color;
+  c.beginPath();
+  c.arc(0, -58, 4, 0, Math.PI * 2);
+  c.fill();
+  // œil
+  c.fillStyle = color;
+  c.beginPath();
+  c.arc(0, -33, 8, 0, Math.PI * 2);
+  c.fill();
+  c.fillStyle = '#0d0a14';
+  c.beginPath();
+  c.arc(0, -33, 4, 0, Math.PI * 2);
+  c.fill();
+
+  if (accessory === 'cap' || accessory === 'hat') {
+    c.fillStyle = accessory === 'cap' ? '#2f9e6b' : '#caa25a';
+    roundRect(c, -18, -52, 36, 6, 3);
+    c.fill();
   }
 
-  ctx.restore();
+  drawSelfRing(c, isMe, -33, 26);
+}
 
-  // nom au-dessus
-  ctx.fillStyle = '#e9e4f2';
-  ctx.font = '11px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(p.name || '', cx, cy - 78 * scale);
+// --- avatar "Alien" : grosse tête, grands yeux ---
+function drawAlienBody(c, move, accessory, color, isMe, t) {
+  const { armLift, bob, sway, legSpread } = motionFor(move, t);
+  c.translate(sway, -bob);
+  drawShadow(c, sway, bob);
+
+  c.fillStyle = color;
+  roundRect(c, -10, 8, 8, 16, 3);
+  roundRect(c, 2, 8, 8, 16, 3);
+  c.fill();
+
+  c.fillStyle = color;
+  roundRect(c, -12, -10, 24, 24, 10);
+  c.fill();
+
+  const armY = -2 - armLift * 18;
+  c.strokeStyle = color;
+  c.lineWidth = 6;
+  c.lineCap = 'round';
+  c.beginPath();
+  c.moveTo(-11, -2); c.lineTo(-20, armY);
+  c.moveTo(11, -2); c.lineTo(20, armY);
+  c.stroke();
+
+  // grosse tête ovale
+  c.fillStyle = color;
+  c.beginPath();
+  c.ellipse(0, -32, 20, 24, 0, 0, Math.PI * 2);
+  c.fill();
+
+  // grands yeux noirs en amande
+  c.fillStyle = '#0d0a14';
+  c.beginPath();
+  c.ellipse(-8, -34, 6, 9, -0.2, 0, Math.PI * 2);
+  c.ellipse(8, -34, 6, 9, 0.2, 0, Math.PI * 2);
+  c.fill();
+  c.fillStyle = 'rgba(255,255,255,0.5)';
+  c.beginPath();
+  c.arc(-6, -37, 1.5, 0, Math.PI * 2);
+  c.arc(10, -37, 1.5, 0, Math.PI * 2);
+  c.fill();
+
+  if (accessory === 'cap') {
+    c.fillStyle = '#2f9e6b';
+    c.beginPath();
+    c.arc(0, -46, 19, Math.PI * 0.9, Math.PI * 2.1);
+    c.fill();
+  } else if (accessory === 'hat') {
+    c.fillStyle = '#caa25a';
+    c.beginPath();
+    c.ellipse(0, -52, 24, 5, 0, 0, Math.PI * 2);
+    c.fill();
+  }
+
+  drawSelfRing(c, isMe, -32, 27);
+}
+
+// --- avatar "Fantôme" : flotte, pas de jambes ---
+function drawGhostBody(c, move, accessory, color, isMe, t) {
+  const bobBase = Math.sin(t / 500) * 5;
+  const extra = move === 'jump' ? Math.abs(Math.sin(t / 200)) * 14
+    : move === 'hands_up' ? Math.abs(Math.sin(t / 260)) * 6
+    : (move === 'dance1' || move === 'dance2') ? Math.abs(Math.sin(t / 280)) * 8 : 0;
+  const sway = (move === 'dance1' || move === 'dance2') ? Math.sin(t / 320) * 12 : Math.sin(t / 700) * 3;
+  c.translate(sway, -(bobBase + extra));
+
+  c.save();
+  c.translate(-sway, bobBase + extra);
+  c.fillStyle = 'rgba(0,0,0,0.3)';
+  c.beginPath();
+  c.ellipse(0, 40, 16, 5, 0, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+
+  c.globalAlpha = 0.9;
+  c.fillStyle = color;
+  c.beginPath();
+  c.arc(0, -12, 20, Math.PI, 0);
+  c.lineTo(20, 24);
+  c.quadraticCurveTo(12, 14, 6, 24);
+  c.quadraticCurveTo(0, 14, -6, 24);
+  c.quadraticCurveTo(-12, 14, -20, 24);
+  c.closePath();
+  c.fill();
+  c.globalAlpha = 1;
+
+  c.fillStyle = '#0d0a14';
+  c.beginPath();
+  c.ellipse(-7, -14, 3.2, 4.5, 0, 0, Math.PI * 2);
+  c.ellipse(7, -14, 3.2, 4.5, 0, 0, Math.PI * 2);
+  c.fill();
+
+  if (accessory === 'cap') {
+    c.fillStyle = '#2f9e6b';
+    c.beginPath();
+    c.arc(0, -28, 14, Math.PI * 0.9, Math.PI * 2.1);
+    c.fill();
+  } else if (accessory === 'hat') {
+    c.fillStyle = '#caa25a';
+    c.beginPath();
+    c.ellipse(0, -32, 18, 4, 0, 0, Math.PI * 2);
+    c.fill();
+  }
+
+  drawSelfRing(c, isMe, -14, 24);
+}
+
+// --- avatar "Dragonnet" : cornes, ailes, queue ---
+function drawDragonBody(c, move, accessory, color, isMe, t) {
+  const { armLift, bob, sway, legSpread } = motionFor(move, t);
+  c.translate(sway, -bob);
+  drawShadow(c, sway, bob);
+
+  // queue
+  c.strokeStyle = color;
+  c.lineWidth = 6;
+  c.lineCap = 'round';
+  c.beginPath();
+  c.moveTo(0, 20); c.quadraticCurveTo(18, 26, 14, 10);
+  c.stroke();
+
+  // jambes
+  c.fillStyle = color;
+  roundRect(c, -12, 14, 8, 14, 3);
+  roundRect(c, 4, 14, 8, 14, 3);
+  c.fill();
+
+  // corps
+  c.fillStyle = color;
+  roundRect(c, -15, -14, 30, 32, 12);
+  c.fill();
+
+  // ailes (s'écartent avec les mains en l'air / saut)
+  const wingSpread = 0.4 + armLift * 0.6;
+  c.fillStyle = color;
+  c.globalAlpha = 0.85;
+  c.beginPath();
+  c.moveTo(-14, -4);
+  c.lineTo(-14 - 22 * wingSpread, -14 - 10 * wingSpread);
+  c.lineTo(-10, -14);
+  c.closePath();
+  c.fill();
+  c.beginPath();
+  c.moveTo(14, -4);
+  c.lineTo(14 + 22 * wingSpread, -14 - 10 * wingSpread);
+  c.lineTo(10, -14);
+  c.closePath();
+  c.fill();
+  c.globalAlpha = 1;
+
+  // tête
+  c.fillStyle = color;
+  c.beginPath();
+  c.arc(0, -28, 14, 0, Math.PI * 2);
+  c.fill();
+  // cornes
+  c.fillStyle = '#e9e4f2';
+  c.beginPath();
+  c.moveTo(-8, -38); c.lineTo(-4, -48); c.lineTo(-2, -38); c.closePath();
+  c.moveTo(8, -38); c.lineTo(4, -48); c.lineTo(2, -38); c.closePath();
+  c.fill();
+  // yeux
+  c.fillStyle = '#0d0a14';
+  c.beginPath();
+  c.arc(-5, -29, 2.5, 0, Math.PI * 2);
+  c.arc(5, -29, 2.5, 0, Math.PI * 2);
+  c.fill();
+
+  if (accessory === 'cap') {
+    c.fillStyle = '#2f9e6b';
+    c.beginPath();
+    c.arc(0, -33, 14.5, Math.PI * 0.85, Math.PI * 2.15);
+    c.fill();
+  } else if (accessory === 'hat') {
+    c.fillStyle = '#caa25a';
+    c.beginPath();
+    c.ellipse(0, -40, 18, 4, 0, 0, Math.PI * 2);
+    c.fill();
+  }
+
+  drawSelfRing(c, isMe, -28, 20);
+}
+
+// --- avatar "Blob" : rond, tentacules, un œil ---
+function drawBlobBody(c, move, accessory, color, isMe, t) {
+  const bobBase = Math.abs(Math.sin(t / 500)) * 4;
+  const extra = move === 'jump' ? Math.abs(Math.sin(t / 200)) * 16
+    : move === 'hands_up' ? Math.abs(Math.sin(t / 260)) * 6
+    : (move === 'dance1' || move === 'dance2') ? Math.abs(Math.sin(t / 280)) * 8 : 0;
+  const sway = (move === 'dance1' || move === 'dance2') ? Math.sin(t / 300) * 12 : Math.sin(t / 750) * 2;
+  const squish = 1 - Math.min(0.15, (bobBase + extra) / 60);
+  c.translate(sway, -(bobBase + extra));
+
+  c.save();
+  c.translate(-sway, bobBase + extra);
+  c.fillStyle = 'rgba(0,0,0,0.35)';
+  c.beginPath();
+  c.ellipse(0, 30, 18, 5, 0, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+
+  // tentacules
+  c.strokeStyle = color;
+  c.lineWidth = 5;
+  c.lineCap = 'round';
+  for (let i = -1; i <= 1; i++) {
+    c.beginPath();
+    c.moveTo(i * 10, 14);
+    c.quadraticCurveTo(i * 14, 24 + Math.sin(t / 300 + i) * 4, i * 8, 30 + Math.sin(t / 300 + i) * 3);
+    c.stroke();
+  }
+
+  // corps rond (légèrement écrasé au sol quand il saute)
+  c.save();
+  c.scale(1, squish);
+  c.fillStyle = color;
+  c.beginPath();
+  c.arc(0, -4 / squish, 20, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+
+  // œil unique
+  c.fillStyle = '#fff';
+  c.beginPath();
+  c.arc(0, -8, 9, 0, Math.PI * 2);
+  c.fill();
+  c.fillStyle = '#0d0a14';
+  c.beginPath();
+  c.arc(0, -8, 4.5, 0, Math.PI * 2);
+  c.fill();
+
+  if (accessory === 'cap') {
+    c.fillStyle = '#2f9e6b';
+    c.beginPath();
+    c.arc(0, -20, 13, Math.PI * 0.9, Math.PI * 2.1);
+    c.fill();
+  } else if (accessory === 'hat') {
+    c.fillStyle = '#caa25a';
+    c.beginPath();
+    c.ellipse(0, -24, 17, 4, 0, 0, Math.PI * 2);
+    c.fill();
+  }
+
+  drawSelfRing(c, isMe, -8, 24);
 }
 
 function loop(t) {
