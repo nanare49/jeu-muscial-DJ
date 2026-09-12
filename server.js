@@ -209,10 +209,11 @@ io.on('connection', (socket) => {
 
   // Un joueur colle un lien YouTube : le serveur donne un "top départ" commun
   // (quelques secondes dans le futur) pour que chaque lecteur démarre en même temps.
+  // Réservé au DJ actuel de la salle.
   socket.on('play-video', ({ videoId, title }) => {
     if (!currentRoomId || !videoId) return;
     const room = rooms.get(currentRoomId);
-    if (!room) return;
+    if (!room || socket.id !== room.djId) return;
     room.currentVideo = {
       videoId,
       title: String(title || '').slice(0, 100),
@@ -223,12 +224,13 @@ io.on('connection', (socket) => {
     io.to(currentRoomId).emit('video-state', room.currentVideo);
   });
 
-  // Contrôle de lecture partagé : pause, reprise, avance/retour dans le temps.
-  // N'importe qui dans la salle peut agir, comme une vraie régie commune.
+  // Contrôle de lecture (pause, reprise, avance/retour) : réservé au DJ actuel,
+  // comme une vraie régie que lui seul manie.
   socket.on('video-control', ({ action, positionSec }) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
-    const cv = room && room.currentVideo;
+    if (!room || socket.id !== room.djId) return;
+    const cv = room.currentVideo;
     if (!cv) return;
 
     const actualPos = cv.paused
