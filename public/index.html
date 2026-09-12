@@ -88,21 +88,32 @@
     width: 280px;
   }
   #light-fx-box h2 { font-size: 13px; font-weight: 500; margin: 0 0 10px; }
-  .fx-checkbox-row {
-    display: flex; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 12px;
+  .fx-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 4px; padding: 4px 0;
   }
-  .fx-checkbox-row label {
-    font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer;
+  .fx-row label {
+    font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: pointer;
+  }
+  .fx-row input[type="color"] {
+    width: 30px; height: 22px; border: 1px solid var(--line); border-radius: 5px;
+    background: none; cursor: pointer; padding: 0;
+  }
+  .fx-subrow {
+    display: flex; align-items: center; gap: 6px; margin: 2px 0 10px 20px;
+  }
+  .fx-subrow label { font-size: 11px; color: var(--muted); width: 50px; flex-shrink: 0; }
+  .fx-subrow input[type="range"] { flex: 1; }
+  .fx-subrow span { font-size: 11px; color: var(--muted); width: 16px; text-align: right; }
+  .fx-subrow select {
+    flex: 1; background: #1d1829; border: 1px solid var(--line); color: var(--text);
+    border-radius: 6px; padding: 4px 6px; font-size: 11px;
   }
   .fx-slider-row {
-    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px; margin: 10px 0 0;
   }
   .fx-slider-row label { font-size: 12px; color: var(--muted); width: 70px; flex-shrink: 0; }
   .fx-slider-row input[type="range"] { flex: 1; }
-  .fx-slider-row input[type="color"] {
-    width: 40px; height: 26px; border: 1px solid var(--line); border-radius: 6px;
-    background: none; cursor: pointer; padding: 0;
-  }
 
   #bottom-bars {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
@@ -264,13 +275,45 @@
 
 <div id="light-fx-box" style="display:none;">
   <h2>Effets lumineux</h2>
-  <div class="fx-checkbox-row">
-    <label><input type="checkbox" id="fx-flash"> Flash</label>
-    <label><input type="checkbox" id="fx-laser"> Laser</label>
-    <label><input type="checkbox" id="fx-fireballs"> Boules de feu</label>
-    <label><input type="checkbox" id="fx-sparks"> Étincelles</label>
-    <label><input type="checkbox" id="fx-discoball"> Boule à facettes</label>
+
+  <div class="fx-row">
+    <label><input type="checkbox" id="fx-flash-on"> Flash</label>
+    <input type="color" id="fx-flash-color" value="#ff5fa3">
   </div>
+
+  <div class="fx-row">
+    <label><input type="checkbox" id="fx-laser-on"> Laser</label>
+    <input type="color" id="fx-laser-color" value="#5ad1ff">
+  </div>
+  <div class="fx-subrow">
+    <label>Nombre</label>
+    <input type="range" id="fx-laser-count" min="1" max="8" step="1" value="4">
+    <span id="fx-laser-count-val">4</span>
+  </div>
+  <div class="fx-subrow">
+    <label>Style</label>
+    <select id="fx-laser-style">
+      <option value="rotating">Balayage rotatif</option>
+      <option value="fan">Éventail</option>
+      <option value="cross">Croisés</option>
+    </select>
+  </div>
+
+  <div class="fx-row">
+    <label><input type="checkbox" id="fx-fireballs-on"> Flammes (côtés du DJ)</label>
+    <input type="color" id="fx-fireballs-color" value="#ff7a3d">
+  </div>
+
+  <div class="fx-row">
+    <label><input type="checkbox" id="fx-sparks-on"> Fontaine à étincelles</label>
+    <input type="color" id="fx-sparks-color" value="#ffd35a">
+  </div>
+
+  <div class="fx-row">
+    <label><input type="checkbox" id="fx-discoball-on"> Boule à facettes</label>
+    <input type="color" id="fx-discoball-color" value="#ffffff">
+  </div>
+
   <div class="fx-slider-row">
     <label>Puissance</label>
     <input type="range" id="fx-power" min="0" max="1" step="0.05" value="0.6">
@@ -278,10 +321,6 @@
   <div class="fx-slider-row">
     <label>Vitesse</label>
     <input type="range" id="fx-speed" min="0.3" max="2.5" step="0.1" value="1">
-  </div>
-  <div class="fx-slider-row">
-    <label>Couleur</label>
-    <input type="color" id="fx-color" value="#ff5fa3">
   </div>
 </div>
 
@@ -319,8 +358,12 @@ let myCreatorId = null;
 let djMode = 'fixed';
 let djQueue = [];
 let currentLightEffects = {
-  flash: false, laser: false, fireballs: false, sparks: false, discoball: false,
-  power: 0.6, speed: 1.0, color: '#ff5fa3'
+  flash: { on: false, color: '#ff5fa3' },
+  laser: { on: false, color: '#5ad1ff', count: 4, style: 'rotating' },
+  fireballs: { on: false, color: '#ff7a3d' },
+  sparks: { on: false, color: '#ffd35a' },
+  discoball: { on: false, color: '#ffffff' },
+  power: 0.6, speed: 1.0
 };
 let avatarConfirmed = false;
 
@@ -483,40 +526,59 @@ document.getElementById('dj-mode-select').addEventListener('change', (e) => {
 });
 
 // --- effets lumineux (contrôlés par le DJ, visibles par tout le monde) ---
-const fxCheckboxIds = { flash: 'fx-flash', laser: 'fx-laser', fireballs: 'fx-fireballs', sparks: 'fx-sparks', discoball: 'fx-discoball' };
-
 function currentFxStateFromControls() {
   return {
-    flash: document.getElementById('fx-flash').checked,
-    laser: document.getElementById('fx-laser').checked,
-    fireballs: document.getElementById('fx-fireballs').checked,
-    sparks: document.getElementById('fx-sparks').checked,
-    discoball: document.getElementById('fx-discoball').checked,
+    flash: { on: document.getElementById('fx-flash-on').checked, color: document.getElementById('fx-flash-color').value },
+    laser: {
+      on: document.getElementById('fx-laser-on').checked,
+      color: document.getElementById('fx-laser-color').value,
+      count: parseInt(document.getElementById('fx-laser-count').value, 10),
+      style: document.getElementById('fx-laser-style').value
+    },
+    fireballs: { on: document.getElementById('fx-fireballs-on').checked, color: document.getElementById('fx-fireballs-color').value },
+    sparks: { on: document.getElementById('fx-sparks-on').checked, color: document.getElementById('fx-sparks-color').value },
+    discoball: { on: document.getElementById('fx-discoball-on').checked, color: document.getElementById('fx-discoball-color').value },
     power: parseFloat(document.getElementById('fx-power').value),
-    speed: parseFloat(document.getElementById('fx-speed').value),
-    color: document.getElementById('fx-color').value
+    speed: parseFloat(document.getElementById('fx-speed').value)
   };
 }
 function sendLightEffects() {
+  document.getElementById('fx-laser-count-val').textContent = document.getElementById('fx-laser-count').value;
   socket.emit('set-light-effects', currentFxStateFromControls());
 }
-Object.values(fxCheckboxIds).forEach(id => {
-  document.getElementById(id).addEventListener('change', sendLightEffects);
+const fxControlIds = [
+  'fx-flash-on', 'fx-flash-color',
+  'fx-laser-on', 'fx-laser-color', 'fx-laser-count', 'fx-laser-style',
+  'fx-fireballs-on', 'fx-fireballs-color',
+  'fx-sparks-on', 'fx-sparks-color',
+  'fx-discoball-on', 'fx-discoball-color',
+  'fx-power', 'fx-speed'
+];
+fxControlIds.forEach(id => {
+  const el = document.getElementById(id);
+  const evt = (el.type === 'checkbox' || el.tagName === 'SELECT') ? 'change' : 'input';
+  el.addEventListener(evt, sendLightEffects);
 });
-document.getElementById('fx-power').addEventListener('input', sendLightEffects);
-document.getElementById('fx-speed').addEventListener('input', sendLightEffects);
-document.getElementById('fx-color').addEventListener('input', sendLightEffects);
 
 // met les contrôles visuels en accord avec l'état reçu (utile pour les non-DJ
 // qui rejoignent en cours de route, et pour rester synchro après une reconnexion)
 function syncLightEffectsControls() {
   const le = currentLightEffects;
-  Object.entries(fxCheckboxIds).forEach(([key, id]) => {
-    document.getElementById(id).checked = !!le[key];
-  });
+  document.getElementById('fx-flash-on').checked = le.flash.on;
+  document.getElementById('fx-flash-color').value = le.flash.color;
+  document.getElementById('fx-laser-on').checked = le.laser.on;
+  document.getElementById('fx-laser-color').value = le.laser.color;
+  document.getElementById('fx-laser-count').value = le.laser.count;
+  document.getElementById('fx-laser-count-val').textContent = le.laser.count;
+  document.getElementById('fx-laser-style').value = le.laser.style;
+  document.getElementById('fx-fireballs-on').checked = le.fireballs.on;
+  document.getElementById('fx-fireballs-color').value = le.fireballs.color;
+  document.getElementById('fx-sparks-on').checked = le.sparks.on;
+  document.getElementById('fx-sparks-color').value = le.sparks.color;
+  document.getElementById('fx-discoball-on').checked = le.discoball.on;
+  document.getElementById('fx-discoball-color').value = le.discoball.color;
   document.getElementById('fx-power').value = le.power;
   document.getElementById('fx-speed').value = le.speed;
-  document.getElementById('fx-color').value = le.color;
 }
 
 function renderDjModeUI() {
@@ -1240,25 +1302,40 @@ function hexToRgb(hex) {
 function drawLightEffectsBackground(t) {
   const le = currentLightEffects;
   if (!le) return;
-  if (le.laser) drawLaserEffect(t, le.power, le.speed, le.color);
-  if (le.discoball) drawDiscoBallEffect(t, le.power, le.speed, le.color);
-  if (le.fireballs) drawFireballsEffect(t, le.power, le.speed, le.color);
-  if (le.sparks) drawSparksEffect(t, le.power, le.speed, le.color);
+  if (le.laser.on) drawLaserEffect(t, le.power, le.speed, le.laser);
+  if (le.discoball.on) drawDiscoBallEffect(t, le.power, le.speed, le.discoball.color);
+  if (le.fireballs.on) drawFireballsEffect(t, le.power, le.speed, le.fireballs.color);
+  if (le.sparks.on) drawSparksEffect(t, le.power, le.speed, le.sparks.color);
 }
 
-function drawLaserEffect(t, power, speed, color) {
+function drawLaserEffect(t, power, speed, laser) {
   const originX = W / 2, originY = H * 0.16;
-  const beamCount = 4;
-  for (let i = 0; i < beamCount; i++) {
-    const angle = (t / 900) * speed + (i * Math.PI * 2) / beamCount;
-    const len = H * 1.1;
-    const x2 = originX + Math.cos(angle) * len * 0.4;
-    const y2 = originY + Math.sin(angle) * len * 0.3 + len * 0.5;
+  const len = H * 1.15;
+  const count = laser.count || 4;
+  const alphaHex = Math.round(80 + power * 175).toString(16).padStart(2, '0');
+
+  for (let i = 0; i < count; i++) {
+    let angle;
+    if (laser.style === 'fan') {
+      // éventail qui s'ouvre et se referme, centré vers le bas
+      const spread = (Math.PI / 3) * (0.4 + 0.6 * ((Math.sin((t / 900) * speed) + 1) / 2));
+      const base = (i / Math.max(1, count - 1) - 0.5) * spread;
+      angle = Math.PI / 2 + base;
+    } else if (laser.style === 'cross') {
+      // la moitié des faisceaux tourne dans un sens, l'autre moitié dans l'autre : ils se croisent
+      const dir = i % 2 === 0 ? 1 : -1;
+      angle = Math.PI / 2 + Math.sin((t / 700) * speed * dir + i) * 0.9;
+    } else {
+      // balayage rotatif classique, faisceaux répartis uniformément
+      angle = (t / 1000) * speed + (i * Math.PI * 2) / count;
+    }
+    const x2 = originX + Math.cos(angle) * len * 0.5;
+    const y2 = originY + Math.sin(angle) * len * 0.5 + len * 0.4;
     const grad = ctx.createLinearGradient(originX, originY, x2, y2);
-    grad.addColorStop(0, `${color}${Math.round(power * 200).toString(16).padStart(2, '0')}`);
-    grad.addColorStop(1, `${color}00`);
+    grad.addColorStop(0, `${laser.color}${alphaHex}`);
+    grad.addColorStop(1, `${laser.color}00`);
     ctx.strokeStyle = grad;
-    ctx.lineWidth = 3 + power * 3;
+    ctx.lineWidth = 2.5 + power * 3;
     ctx.beginPath();
     ctx.moveTo(originX, originY);
     ctx.lineTo(x2, y2);
@@ -1266,64 +1343,120 @@ function drawLaserEffect(t, power, speed, color) {
   }
 }
 
+// Grosse boule à facettes centrale, dont les reflets scintillent dans toute la salle
 function drawDiscoBallEffect(t, power, speed, color) {
-  const cx = W / 2, cy = H * 0.1, r = 14;
+  const cx = W / 2, cy = H * 0.09, r = 34;
+  const rgb = hexToRgb(color);
+
+  // halo autour de la boule
+  const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 2.2);
+  halo.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${0.35 * power})`);
+  halo.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 2.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // corps de la boule, à facettes
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.rotate((t / 2000) * speed);
-  const rgb = hexToRgb(color);
-  for (let i = 0; i < 14; i++) {
-    ctx.rotate(Math.PI / 7);
-    const flicker = (Math.sin(t / 150 + i) + 1) / 2;
-    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.15 + flicker * 0.5 * power})`;
-    ctx.fillRect(-r, -2, r * 2, 3);
+  ctx.rotate((t / 2200) * speed);
+  for (let i = 0; i < 22; i++) {
+    ctx.rotate(Math.PI / 11);
+    const flicker = (Math.sin(t / 130 + i * 1.7) + 1) / 2;
+    ctx.fillStyle = `rgba(255,255,255,${0.12 + flicker * 0.5})`;
+    ctx.fillRect(-r, -2.2, r * 2, 3.2);
   }
   ctx.restore();
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.25)`;
   ctx.beginPath();
-  ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fill();
-}
 
-function drawFireballsEffect(t, power, speed, color) {
-  const rgb = hexToRgb(color);
-  const cycle = (Math.sin((t / 600) * speed) + 1) / 2; // 0..1 pulsation
-  const intensity = Math.pow(cycle, 3) * power;
-  if (intensity < 0.02) return;
-  const cx = W / 2, cy = H * 0.42;
-  const radius = 60 + intensity * 120;
-  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-  grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${0.5 * intensity})`);
-  grad.addColorStop(0.6, `rgba(${rgb.r},${Math.round(rgb.g * 0.6)},0,${0.25 * intensity})`);
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawSparksEffect(t, power, speed, color) {
-  const rgb = hexToRgb(color);
-  const count = Math.round(20 + power * 40);
-  for (let i = 0; i < count; i++) {
-    const seed = i * 137.5;
-    const x = (Math.sin(seed) * 0.5 + 0.5) * W;
-    const baseY = (Math.cos(seed * 1.3) * 0.5 + 0.5) * H * 0.6;
-    const y = (baseY + (t / 20) * speed * 0.3 + seed) % (H * 0.7);
-    const twinkle = (Math.sin(t / 200 + seed) + 1) / 2;
-    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${twinkle * power * 0.8})`;
+  // reflets qui scintillent un peu partout dans la salle
+  const spotCount = Math.round(14 + power * 20);
+  for (let i = 0; i < spotCount; i++) {
+    const seed = i * 91.7;
+    const swirl = (t / 3000) * speed + seed;
+    const x = W / 2 + Math.cos(swirl) * (W * 0.15 + (i % 5) * W * 0.09);
+    const y = H * 0.25 + Math.sin(swirl * 1.3) * H * 0.28 + (i % 3) * H * 0.08;
+    const twinkle = Math.max(0, Math.sin(t / 180 + seed));
+    if (twinkle < 0.4) continue;
+    ctx.fillStyle = `rgba(255,255,255,${(twinkle - 0.4) * power})`;
     ctx.beginPath();
-    ctx.arc(x, y, 1.5 + twinkle, 0, Math.PI * 2);
+    ctx.arc(x, y, 2 + twinkle * 2, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
+// Flammes verticales de chaque côté du DJ (comme des jets de flamme de scène)
+function drawFireballsEffect(t, power, speed, color) {
+  const rgb = hexToRgb(color);
+  const cycle = (Math.sin((t / 500) * speed) + 1) / 2;
+  const intensity = (0.35 + 0.65 * Math.pow(cycle, 2)) * power;
+  if (intensity < 0.02) return;
+
+  const baseY = H * 0.58;
+  const sideOffset = 130;
+  [-1, 1].forEach(side => {
+    const x = W / 2 + side * sideOffset;
+    const flameHeight = 70 + intensity * 160;
+    const flicker = Math.sin(t / 90 + side * 3) * 6;
+
+    const grad = ctx.createLinearGradient(x, baseY, x, baseY - flameHeight);
+    grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${0.85 * intensity})`);
+    grad.addColorStop(0.5, `rgba(${rgb.r},${Math.round(rgb.g * 0.7)},0,${0.6 * intensity})`);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(x - 14, baseY);
+    ctx.quadraticCurveTo(x - 20 + flicker, baseY - flameHeight * 0.5, x + flicker, baseY - flameHeight);
+    ctx.quadraticCurveTo(x + 20 + flicker, baseY - flameHeight * 0.5, x + 14, baseY);
+    ctx.closePath();
+    ctx.fill();
+  });
+}
+
+// Fontaine à étincelles : jaillissent d'un point fixe, comme une vraie fontaine
+function drawSparksEffect(t, power, speed, color) {
+  const rgb = hexToRgb(color);
+  const originX = W / 2, originY = H * 0.62;
+  const count = Math.round(18 + power * 35);
+  const gravity = 620; // px/s²
+
+  for (let i = 0; i < count; i++) {
+    const seed = i * 53.7;
+    const cycleDuration = 1.1 / Math.max(0.3, speed);
+    const tau = (((t / 1000) * speed + seed) % cycleDuration);
+    const angle = Math.PI / 2 + Math.sin(seed) * 0.5; // vers le haut, légèrement évasé
+    const v0 = 220 + (seed % 100);
+    const vx = Math.cos(angle) * v0 * 0.5;
+    const vy = -Math.sin(angle) * v0;
+
+    const x = originX + vx * tau;
+    const y = originY + vy * tau + 0.5 * gravity * tau * tau;
+    if (y > originY + 10) continue; // repasse sous le point de départ : invisible ce cycle-ci
+
+    const life = 1 - tau / cycleDuration;
+    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${Math.max(0, life) * power})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.5 + life * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // petit tube d'où jaillit la fontaine
+  ctx.fillStyle = '#2a2438';
+  roundRect(ctx, originX - 6, originY, 12, 14, 3);
+  ctx.fill();
+}
+
 function drawFlashEffect(t) {
   const le = currentLightEffects;
-  if (!le || !le.flash) return;
+  if (!le || !le.flash.on) return;
   const pulse = Math.pow(Math.max(0, Math.sin((t / 260) * le.speed)), 10);
   if (pulse < 0.02) return;
-  const rgb = hexToRgb(le.color);
+  const rgb = hexToRgb(le.flash.color);
   ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${pulse * le.power * 0.5})`;
   ctx.fillRect(0, 0, W, H);
 }
