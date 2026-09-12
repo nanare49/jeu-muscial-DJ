@@ -254,10 +254,11 @@ io.on('connection', (socket) => {
     io.to(currentRoomId).emit('video-state', cv);
   });
 
+  // Décor de scène : réservé au DJ actuel, comme le reste de la régie
   socket.on('decor', (decor) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
-    if (!room) return;
+    if (!room || socket.id !== room.djId) return;
     room.decor = String(decor).slice(0, 30);
     io.to(currentRoomId).emit('decor-changed', room.decor);
   });
