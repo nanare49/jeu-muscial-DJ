@@ -56,11 +56,21 @@ function cleanupRoomIfEmpty(roomId) {
   }
 }
 
+const allowedAvatarTypes = ['human', 'robot', 'alien', 'ghost', 'dragon', 'blob'];
+const allowedAvatarColors = ['#ff5fa3', '#5ad1ff', '#ffd35a'];
+
 io.on('connection', (socket) => {
   let currentRoomId = null;
 
-  socket.on('join-room', (requestedRoomId) => {
+  socket.on('join-room', (payload) => {
     if (currentRoomId) return;
+
+    // accepte l'ancien format (juste une chaîne = code de salle) et le nouveau
+    // format objet avec le choix d'avatar fait sur l'écran de sélection
+    const requestedRoomId = typeof payload === 'string' ? payload : (payload && payload.roomId);
+    const requestedAvatarType = payload && typeof payload === 'object' ? payload.avatarType : null;
+    const requestedAvatarColor = payload && typeof payload === 'object' ? payload.avatarColor : null;
+    const requestedName = payload && typeof payload === 'object' ? String(payload.name || '').trim().slice(0, 20) : '';
 
     currentRoomId = requestedRoomId && String(requestedRoomId).trim()
       ? String(requestedRoomId).trim().slice(0, 20)
@@ -77,12 +87,14 @@ io.on('connection', (socket) => {
 
     const playerIndex = Object.keys(room.players).length;
     const player = {
-      name: 'Joueur ' + (playerIndex + 1),
+      name: requestedName || ('Joueur ' + (playerIndex + 1)),
       x: 0.5,
       y: 0.6,
       pose: 'idle',
       accessory: 'none',
       color: colorFor(playerIndex),
+      avatarType: allowedAvatarTypes.includes(requestedAvatarType) ? requestedAvatarType : 'human',
+      avatarColor: allowedAvatarColors.includes(requestedAvatarColor) ? requestedAvatarColor : allowedAvatarColors[0],
       bubbleStyle: 'plain',       // décor de bulle choisi (festivaliers uniquement)
       bubbleSize: isFirstInRoom ? 1.2 : 1.0 // taille de bulle (réglable par le DJ seulement)
     };
