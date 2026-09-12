@@ -73,6 +73,11 @@
   }
   #youtube-controls { display: flex; gap: 6px; margin-top: 8px; }
   #youtube-controls .btn { flex: 1; text-align: center; font-size: 11px; padding: 6px 4px; }
+  #yt-unmute-btn {
+    margin-top: 8px; width: 100%; background: var(--accent); border: none; color: #2a0b18;
+    font-weight: 600; font-size: 12px; border-radius: 6px; padding: 8px; cursor: pointer;
+  }
+  #yt-unmute-btn.hidden { display: none; }
 
   #bottom-bars {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
@@ -100,11 +105,48 @@
     flex: 1; background: #1d1829; border: 1px solid var(--line);
     color: var(--text); border-radius: 6px; padding: 6px 8px; font-size: 12px;
   }
+  .speech-bubble {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    background: rgba(255, 255, 255, 0.95);
+    color: #1a1420;
+    border-radius: 12px;
+    border: 2px solid transparent;
+    padding: 6px 10px;
+    font-size: 12px;
+    max-width: 160px;
+    text-align: center;
+    pointer-events: none;
+    transition: opacity 0.6s ease;
+  }
+  .speech-bubble::after {
+    content: '';
+    position: absolute;
+    left: 50%; bottom: -8px;
+    transform: translateX(-50%);
+    border-width: 7px 7px 0 7px;
+    border-style: solid;
+    border-color: var(--bubble-color, #fff) transparent transparent transparent;
+  }
+  .speech-bubble.fading { opacity: 0; }
+  .speech-bubble.dj-bubble {
+    border-width: 3px;
+    font-weight: 600;
+    box-shadow: 0 0 14px var(--bubble-color, gold), 0 0 5px #fff inset;
+    padding: 8px 14px;
+  }
+  .speech-bubble.style-dashed { border-style: dashed; }
+  .bubble-deco {
+    position: absolute; top: -8px; font-size: 12px; pointer-events: none;
+  }
+  .bubble-deco.left { left: -6px; }
+  .bubble-deco.right { right: -6px; }
 </style>
 </head>
 <body>
 
 <canvas id="stage"></canvas>
+<div id="bubble-layer" style="position:fixed; inset:0; z-index:25; pointer-events:none;"></div>
 
 <div class="panel">
   <h1>Jeu musical — test serveur</h1>
@@ -135,11 +177,13 @@
     <div class="btn" id="yt-pause-btn">⏸ Pause</div>
     <div class="btn" id="yt-forward-btn">+10s ⏩</div>
   </div>
+  <button id="yt-unmute-btn" class="hidden">🔊 Activer le son</button>
 </div>
 
 <div id="bottom-bars">
   <div class="bar" id="poseBar"></div>
   <div class="bar" id="accessoryBar"></div>
+  <div class="bar" id="bubbleControlBar"></div>
 </div>
 
 <div id="chat-wrap">
@@ -165,6 +209,7 @@ const socket = io();
 let selfId = null;
 let players = {};
 let currentDecor = 'mainstage';
+let myDjId = null;
 
 const urlParams = new URLSearchParams(window.location.search);
 const requestedRoom = urlParams.get('room') || '';
@@ -191,12 +236,18 @@ socket.on('room-state', (state) => {
   if (state.currentVideo) {
     applyVideoState(state.currentVideo);
   }
+
+  myDjId = state.djId;
+  renderBubbleControlBar();
 });
 socket.on('player-joined', ({ id, player }) => { players[id] = player; });
 socket.on('player-left', ({ id }) => { delete players[id]; });
 socket.on('player-moved', ({ id, x, y }) => { if (players[id]) { players[id].x = x; players[id].y = y; } });
 socket.on('player-posed', ({ id, pose }) => { if (players[id]) players[id].pose = pose; });
 socket.on('player-accessory', ({ id, accessory }) => { if (players[id]) players[id].accessory = accessory; });
+socket.on('player-bubble-style', ({ id, style }) => { if (players[id]) players[id].bubbleStyle = style; });
+socket.on('player-bubble-size', ({ id, size }) => { if (players[id]) players[id].bubbleSize = size; });
+socket.on('dj-changed', (djId) => { myDjId = djId; renderBubbleControlBar(); });
 socket.on('decor-changed', (decor) => {
   currentDecor = decor;
   document.getElementById('decor-select').value = decor;
@@ -205,6 +256,46 @@ socket.on('decor-changed', (decor) => {
 document.getElementById('decor-select').addEventListener('change', (e) => {
   socket.emit('decor', e.target.value);
 });
+
+// --- panneau adapté au rôle : curseur de taille pour le DJ, décor de bulle pour les autres ---
+function renderBubbleControlBar() {
+  const bar = document.getElementById('bubbleControlBar');
+  bar.innerHTML = '';
+  const amIDJ = selfId && selfId === myDjId;
+
+  if (amIDJ) {
+    const label = document.createElement('span');
+    label.textContent = 'Taille de ta bulle :';
+    label.style.fontSize = '12px';
+    label.style.alignSelf = 'center';
+    label.style.color = 'var(--muted)';
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '1'; slider.max = '1.6'; slider.step = '0.1';
+    slider.value = (players[selfId] && players[selfId].bubbleSize) || 1.2;
+    slider.addEventListener('input', () => socket.emit('bubble-size', parseFloat(slider.value)));
+    bar.appendChild(label);
+    bar.appendChild(slider);
+  } else {
+    const styles = [
+      { id: 'plain', label: 'Simple' },
+      { id: 'dashed', label: 'Pointillé' },
+      { id: 'stars', label: 'Étoiles' }
+    ];
+    const myStyle = (players[selfId] && players[selfId].bubbleStyle) || 'plain';
+    styles.forEach(s => {
+      const btn = document.createElement('div');
+      btn.className = 'btn' + (s.id === myStyle ? ' active' : '');
+      btn.textContent = s.label;
+      btn.addEventListener('click', () => {
+        socket.emit('bubble-style', s.id);
+        bar.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+      bar.appendChild(btn);
+    });
+  }
+}
 
 // --- poses et accessoires ---
 const poses = ['idle', 'hands_up', 'jump', 'clap', 'dance1', 'dance2'];
@@ -437,6 +528,7 @@ function loop(t) {
   ctx.clearRect(0, 0, W, H);
   drawBackground();
   Object.entries(players).forEach(([id, p]) => drawPlayer(p, id === selfId, t));
+  activeBubbles.forEach(positionBubble);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -452,16 +544,73 @@ function sendChat() {
   socket.emit('chat', text);
   chatInput.value = '';
 }
-socket.on('chat-message', ({ name, color, text }) => {
+socket.on('chat-message', ({ id, name, color, text }) => {
   const line = document.createElement('div');
   line.innerHTML = `<b style="color:${color}">${escapeHtml(name)}</b>: ${escapeHtml(text)}`;
   chatLog.appendChild(line);
   chatLog.scrollTop = chatLog.scrollHeight;
+
+  showSpeechBubble(id, color, text);
 });
 function escapeHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// --- bulles de dialogue au-dessus des avatars ---
+const bubbleLayer = document.getElementById('bubble-layer');
+let activeBubbles = []; // { playerId, el }
+
+function showSpeechBubble(playerId, color, text) {
+  const p = players[playerId];
+  const isDJ = playerId === myDjId;
+  const bubbleSize = (p && p.bubbleSize) || (isDJ ? 1.2 : 1.0);
+  const bubbleStyle = (p && p.bubbleStyle) || 'plain';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'speech-bubble';
+  if (isDJ) bubble.classList.add('dj-bubble');
+  else if (bubbleStyle === 'dashed') bubble.classList.add('style-dashed');
+
+  bubble.style.setProperty('--bubble-color', isDJ ? '#ffd35a' : (color || '#fff'));
+  bubble.style.borderColor = isDJ ? '#ffd35a' : (color || '#fff');
+  bubble.style.transform = `translate(-50%, -100%) scale(${bubbleSize})`;
+  bubble.style.transformOrigin = '50% 100%';
+  bubble.textContent = text;
+
+  if (!isDJ && bubbleStyle === 'stars') {
+    const left = document.createElement('span');
+    left.className = 'bubble-deco left';
+    left.textContent = '✨';
+    const right = document.createElement('span');
+    right.className = 'bubble-deco right';
+    right.textContent = '✨';
+    bubble.appendChild(left);
+    bubble.appendChild(right);
+  }
+
+  bubbleLayer.appendChild(bubble);
+
+  const entry = { playerId, el: bubble };
+  activeBubbles.push(entry);
+  positionBubble(entry);
+
+  setTimeout(() => {
+    bubble.classList.add('fading');
+    setTimeout(() => {
+      bubble.remove();
+      activeBubbles = activeBubbles.filter(b => b !== entry);
+    }, 600);
+  }, 3200);
+}
+
+function positionBubble(entry) {
+  const p = players[entry.playerId];
+  if (!p) return; // le joueur est parti entre-temps : on laisse la bulle où elle était
+  const scale = entry.playerId === selfId ? 1.05 : 0.9;
+  entry.el.style.left = (p.x * W) + 'px';
+  entry.el.style.top = (p.y * H - 90 * scale) + 'px';
 }
 
 // --- YouTube (lecture synchronisée, sans aucun compte requis) ---
@@ -561,10 +710,14 @@ function applyVideoState(cv) {
 window.onYouTubeIframeAPIReady = function () {
   ytPlayer = new YT.Player('youtube-player', {
     height: '100%', width: '100%',
-    playerVars: { autoplay: 1, playsinline: 1, controls: 0 },
+    // on démarre TOUJOURS en muet : les navigateurs autorisent ça sans restriction,
+    // contrairement au son automatique qui est bloqué tant que la personne n'a pas
+    // encore interagi avec la page. Le bouton "Activer le son" débloque ensuite.
+    playerVars: { autoplay: 1, playsinline: 1, controls: 0, mute: 1 },
     events: {
       onReady: () => {
         ytPlayerReady = true;
+        document.getElementById('yt-unmute-btn').classList.remove('hidden');
         if (pendingVideo) {
           const cv = pendingVideo;
           pendingVideo = null;
@@ -577,6 +730,17 @@ window.onYouTubeIframeAPIReady = function () {
 const ytScript = document.createElement('script');
 ytScript.src = 'https://www.youtube.com/iframe_api';
 document.head.appendChild(ytScript);
+
+function unmutePlayer() {
+  if (ytPlayer && ytPlayerReady) {
+    ytPlayer.unMute();
+    ytPlayer.setVolume(100);
+    document.getElementById('yt-unmute-btn').classList.add('hidden');
+  }
+}
+document.getElementById('yt-unmute-btn').addEventListener('click', unmutePlayer);
+// tentative en plus : le tout premier clic n'importe où sur la page active aussi le son
+document.addEventListener('click', unmutePlayer, { once: true });
 </script>
 </body>
 </html>
