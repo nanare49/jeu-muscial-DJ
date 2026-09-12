@@ -43,7 +43,11 @@ function getOrCreateRoom(roomId) {
       currentVideo: null,
       creatorId: null,
       djMode: 'fixed', // 'fixed' (le créateur reste DJ) ou 'queue' (file d'attente façon plug.dj)
-      djQueue: []       // liste d'ids en attente de leur tour, en mode 'queue'
+      djQueue: [],      // liste d'ids en attente de leur tour, en mode 'queue'
+      lightEffects: {
+        flash: false, laser: false, fireballs: false, sparks: false, discoball: false,
+        power: 0.6, speed: 1.0, color: '#ff5fa3'
+      }
     });
   }
   return rooms.get(roomId);
@@ -109,6 +113,7 @@ io.on('connection', (socket) => {
       creatorId: room.creatorId,
       djMode: room.djMode,
       djQueue: room.djQueue,
+      lightEffects: room.lightEffects,
       selfId: socket.id
     });
 
@@ -273,6 +278,32 @@ io.on('connection', (socket) => {
     if (!room || socket.id !== room.djId) return;
     room.decor = String(decor).slice(0, 30);
     io.to(currentRoomId).emit('decor-changed', room.decor);
+  });
+
+  // Effets lumineux : réservés au DJ, comme le reste de la régie.
+  // On reçoit l'état complet à chaque changement (case cochée, curseur bougé, couleur choisie).
+  socket.on('set-light-effects', (payload) => {
+    if (!currentRoomId || !payload) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || socket.id !== room.djId) return;
+
+    const clampedPower = Math.max(0, Math.min(1, Number(payload.power)));
+    const clampedSpeed = Math.max(0.3, Math.min(2.5, Number(payload.speed)));
+    const validColor = typeof payload.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(payload.color)
+      ? payload.color
+      : room.lightEffects.color;
+
+    room.lightEffects = {
+      flash: !!payload.flash,
+      laser: !!payload.laser,
+      fireballs: !!payload.fireballs,
+      sparks: !!payload.sparks,
+      discoball: !!payload.discoball,
+      power: Number.isFinite(clampedPower) ? clampedPower : room.lightEffects.power,
+      speed: Number.isFinite(clampedSpeed) ? clampedSpeed : room.lightEffects.speed,
+      color: validColor
+    };
+    io.to(currentRoomId).emit('light-effects-changed', room.lightEffects);
   });
 
   socket.on('disconnect', () => {
