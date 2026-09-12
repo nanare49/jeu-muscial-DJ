@@ -282,13 +282,27 @@ const avatarColorChoices = ['#ff5fa3', '#5ad1ff', '#ffd35a'];
 let avatarTypeIndex = 0;
 let avatarColorIndex = 0;
 
+// on relit les derniers choix faits sur ce navigateur, s'il y en a
+let savedAvatarPrefs = null;
+try {
+  savedAvatarPrefs = JSON.parse(localStorage.getItem('jeuMusicalAvatarPrefs') || 'null');
+} catch (e) { /* ignore */ }
+if (savedAvatarPrefs) {
+  if (Number.isInteger(savedAvatarPrefs.typeIndex) && avatarTypes[savedAvatarPrefs.typeIndex]) {
+    avatarTypeIndex = savedAvatarPrefs.typeIndex;
+  }
+  if (Number.isInteger(savedAvatarPrefs.colorIndex) && avatarColorChoices[savedAvatarPrefs.colorIndex]) {
+    avatarColorIndex = savedAvatarPrefs.colorIndex;
+  }
+}
+
 const avatarPreviewCanvas = document.getElementById('avatar-preview-canvas');
 const avatarPreviewCtx = avatarPreviewCanvas.getContext('2d');
 
 const colorRow = document.getElementById('avatar-color-row');
 avatarColorChoices.forEach((color, i) => {
   const sw = document.createElement('div');
-  sw.className = 'avatar-color-swatch' + (i === 0 ? ' selected' : '');
+  sw.className = 'avatar-color-swatch' + (i === avatarColorIndex ? ' selected' : '');
   sw.style.background = color;
   sw.addEventListener('click', () => {
     avatarColorIndex = i;
@@ -297,6 +311,11 @@ avatarColorChoices.forEach((color, i) => {
   });
   colorRow.appendChild(sw);
 });
+
+if (savedAvatarPrefs && savedAvatarPrefs.name) {
+  document.getElementById('avatar-name-input').value = savedAvatarPrefs.name;
+}
+updateAvatarTypeLabel();
 
 document.getElementById('avatar-prev-btn').addEventListener('click', () => {
   avatarTypeIndex = (avatarTypeIndex - 1 + avatarTypes.length) % avatarTypes.length;
@@ -315,6 +334,17 @@ document.getElementById('avatar-confirm-btn').addEventListener('click', () => {
   document.getElementById('avatar-select-overlay').remove();
   const nameInputEl = document.getElementById('avatar-name-input');
   const chosenName = nameInputEl ? nameInputEl.value.trim() : '';
+
+  // on retient ce choix dans le navigateur, pour le retrouver automatiquement
+  // même après un rechargement de page ou une reconnexion
+  try {
+    localStorage.setItem('jeuMusicalAvatarPrefs', JSON.stringify({
+      typeIndex: avatarTypeIndex,
+      colorIndex: avatarColorIndex,
+      name: chosenName
+    }));
+  } catch (e) { /* stockage indisponible : pas grave, juste moins pratique */ }
+
   socket.emit('join-room', {
     roomId: requestedRoom,
     avatarType: avatarTypes[avatarTypeIndex],
