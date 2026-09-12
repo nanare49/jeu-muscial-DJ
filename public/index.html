@@ -79,6 +79,31 @@
   }
   #yt-unmute-btn.hidden { display: none; }
 
+  #light-fx-box {
+    position: fixed; right: 16px; top: 420px; z-index: 20;
+    background: rgba(20, 16, 28, 0.9);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    width: 280px;
+  }
+  #light-fx-box h2 { font-size: 13px; font-weight: 500; margin: 0 0 10px; }
+  .fx-checkbox-row {
+    display: flex; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 12px;
+  }
+  .fx-checkbox-row label {
+    font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer;
+  }
+  .fx-slider-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .fx-slider-row label { font-size: 12px; color: var(--muted); width: 70px; flex-shrink: 0; }
+  .fx-slider-row input[type="range"] { flex: 1; }
+  .fx-slider-row input[type="color"] {
+    width: 40px; height: 26px; border: 1px solid var(--line); border-radius: 6px;
+    background: none; cursor: pointer; padding: 0;
+  }
+
   #bottom-bars {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
     z-index: 20; display: flex; flex-direction: column; gap: 8px; align-items: center;
@@ -237,6 +262,29 @@
   <button id="yt-unmute-btn" class="hidden">🔊 Activer le son</button>
 </div>
 
+<div id="light-fx-box" style="display:none;">
+  <h2>Effets lumineux</h2>
+  <div class="fx-checkbox-row">
+    <label><input type="checkbox" id="fx-flash"> Flash</label>
+    <label><input type="checkbox" id="fx-laser"> Laser</label>
+    <label><input type="checkbox" id="fx-fireballs"> Boules de feu</label>
+    <label><input type="checkbox" id="fx-sparks"> Étincelles</label>
+    <label><input type="checkbox" id="fx-discoball"> Boule à facettes</label>
+  </div>
+  <div class="fx-slider-row">
+    <label>Puissance</label>
+    <input type="range" id="fx-power" min="0" max="1" step="0.05" value="0.6">
+  </div>
+  <div class="fx-slider-row">
+    <label>Vitesse</label>
+    <input type="range" id="fx-speed" min="0.3" max="2.5" step="0.1" value="1">
+  </div>
+  <div class="fx-slider-row">
+    <label>Couleur</label>
+    <input type="color" id="fx-color" value="#ff5fa3">
+  </div>
+</div>
+
 <div id="bottom-bars">
   <div class="bar" id="poseBar"></div>
   <div class="bar" id="accessoryBar"></div>
@@ -270,6 +318,10 @@ let myDjId = null;
 let myCreatorId = null;
 let djMode = 'fixed';
 let djQueue = [];
+let currentLightEffects = {
+  flash: false, laser: false, fireballs: false, sparks: false, discoball: false,
+  power: 0.6, speed: 1.0, color: '#ff5fa3'
+};
 let avatarConfirmed = false;
 
 // --- écran de sélection d'avatar (obligatoire avant d'entrer dans la salle) ---
@@ -394,6 +446,10 @@ socket.on('room-state', (state) => {
   myCreatorId = state.creatorId;
   djMode = state.djMode || 'fixed';
   djQueue = state.djQueue || [];
+  if (state.lightEffects) {
+    currentLightEffects = state.lightEffects;
+    syncLightEffectsControls();
+  }
   renderBubbleControlBar();
   renderDjModeUI();
 });
@@ -411,6 +467,7 @@ socket.on('player-bubble-size', ({ id, size }) => { if (players[id]) players[id]
 socket.on('dj-changed', (djId) => { myDjId = djId; renderBubbleControlBar(); renderDjModeUI(); });
 socket.on('dj-mode-changed', ({ mode, queue }) => { djMode = mode; djQueue = queue; renderDjModeUI(); });
 socket.on('dj-queue-changed', (queue) => { djQueue = queue; renderDjModeUI(); });
+socket.on('light-effects-changed', (le) => { currentLightEffects = le; syncLightEffectsControls(); });
 socket.on('decor-changed', (decor) => {
   currentDecor = decor;
   document.getElementById('decor-select').value = decor;
@@ -424,6 +481,43 @@ document.getElementById('decor-select').addEventListener('change', (e) => {
 document.getElementById('dj-mode-select').addEventListener('change', (e) => {
   socket.emit('set-dj-mode', e.target.value);
 });
+
+// --- effets lumineux (contrôlés par le DJ, visibles par tout le monde) ---
+const fxCheckboxIds = { flash: 'fx-flash', laser: 'fx-laser', fireballs: 'fx-fireballs', sparks: 'fx-sparks', discoball: 'fx-discoball' };
+
+function currentFxStateFromControls() {
+  return {
+    flash: document.getElementById('fx-flash').checked,
+    laser: document.getElementById('fx-laser').checked,
+    fireballs: document.getElementById('fx-fireballs').checked,
+    sparks: document.getElementById('fx-sparks').checked,
+    discoball: document.getElementById('fx-discoball').checked,
+    power: parseFloat(document.getElementById('fx-power').value),
+    speed: parseFloat(document.getElementById('fx-speed').value),
+    color: document.getElementById('fx-color').value
+  };
+}
+function sendLightEffects() {
+  socket.emit('set-light-effects', currentFxStateFromControls());
+}
+Object.values(fxCheckboxIds).forEach(id => {
+  document.getElementById(id).addEventListener('change', sendLightEffects);
+});
+document.getElementById('fx-power').addEventListener('input', sendLightEffects);
+document.getElementById('fx-speed').addEventListener('input', sendLightEffects);
+document.getElementById('fx-color').addEventListener('input', sendLightEffects);
+
+// met les contrôles visuels en accord avec l'état reçu (utile pour les non-DJ
+// qui rejoignent en cours de route, et pour rester synchro après une reconnexion)
+function syncLightEffectsControls() {
+  const le = currentLightEffects;
+  Object.entries(fxCheckboxIds).forEach(([key, id]) => {
+    document.getElementById(id).checked = !!le[key];
+  });
+  document.getElementById('fx-power').value = le.power;
+  document.getElementById('fx-speed').value = le.speed;
+  document.getElementById('fx-color').value = le.color;
+}
 
 function renderDjModeUI() {
   const modeRow = document.getElementById('dj-mode-row');
@@ -1125,15 +1219,114 @@ function drawBlobBody(c, move, accessory, color, isMe, t) {
 function loop(t) {
   ctx.clearRect(0, 0, W, H);
   drawBackground();
+  drawLightEffectsBackground(t);
   Object.entries(players).forEach(([id, p]) => {
     if (id === myDjId) drawDjOnStage(p, id === selfId, t);
     else drawPlayer(p, id === selfId, t);
   });
   updateAndDrawConfetti();
+  drawFlashEffect(t);
   activeBubbles.forEach(positionBubble);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+// --- rendu des effets lumineux ---
+function hexToRgb(hex) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+  return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 255, g: 95, b: 163 };
+}
+
+function drawLightEffectsBackground(t) {
+  const le = currentLightEffects;
+  if (!le) return;
+  if (le.laser) drawLaserEffect(t, le.power, le.speed, le.color);
+  if (le.discoball) drawDiscoBallEffect(t, le.power, le.speed, le.color);
+  if (le.fireballs) drawFireballsEffect(t, le.power, le.speed, le.color);
+  if (le.sparks) drawSparksEffect(t, le.power, le.speed, le.color);
+}
+
+function drawLaserEffect(t, power, speed, color) {
+  const originX = W / 2, originY = H * 0.16;
+  const beamCount = 4;
+  for (let i = 0; i < beamCount; i++) {
+    const angle = (t / 900) * speed + (i * Math.PI * 2) / beamCount;
+    const len = H * 1.1;
+    const x2 = originX + Math.cos(angle) * len * 0.4;
+    const y2 = originY + Math.sin(angle) * len * 0.3 + len * 0.5;
+    const grad = ctx.createLinearGradient(originX, originY, x2, y2);
+    grad.addColorStop(0, `${color}${Math.round(power * 200).toString(16).padStart(2, '0')}`);
+    grad.addColorStop(1, `${color}00`);
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 3 + power * 3;
+    ctx.beginPath();
+    ctx.moveTo(originX, originY);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+}
+
+function drawDiscoBallEffect(t, power, speed, color) {
+  const cx = W / 2, cy = H * 0.1, r = 14;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate((t / 2000) * speed);
+  const rgb = hexToRgb(color);
+  for (let i = 0; i < 14; i++) {
+    ctx.rotate(Math.PI / 7);
+    const flicker = (Math.sin(t / 150 + i) + 1) / 2;
+    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.15 + flicker * 0.5 * power})`;
+    ctx.fillRect(-r, -2, r * 2, 3);
+  }
+  ctx.restore();
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawFireballsEffect(t, power, speed, color) {
+  const rgb = hexToRgb(color);
+  const cycle = (Math.sin((t / 600) * speed) + 1) / 2; // 0..1 pulsation
+  const intensity = Math.pow(cycle, 3) * power;
+  if (intensity < 0.02) return;
+  const cx = W / 2, cy = H * 0.42;
+  const radius = 60 + intensity * 120;
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+  grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${0.5 * intensity})`);
+  grad.addColorStop(0.6, `rgba(${rgb.r},${Math.round(rgb.g * 0.6)},0,${0.25 * intensity})`);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawSparksEffect(t, power, speed, color) {
+  const rgb = hexToRgb(color);
+  const count = Math.round(20 + power * 40);
+  for (let i = 0; i < count; i++) {
+    const seed = i * 137.5;
+    const x = (Math.sin(seed) * 0.5 + 0.5) * W;
+    const baseY = (Math.cos(seed * 1.3) * 0.5 + 0.5) * H * 0.6;
+    const y = (baseY + (t / 20) * speed * 0.3 + seed) % (H * 0.7);
+    const twinkle = (Math.sin(t / 200 + seed) + 1) / 2;
+    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${twinkle * power * 0.8})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.5 + twinkle, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawFlashEffect(t) {
+  const le = currentLightEffects;
+  if (!le || !le.flash) return;
+  const pulse = Math.pow(Math.max(0, Math.sin((t / 260) * le.speed)), 10);
+  if (pulse < 0.02) return;
+  const rgb = hexToRgb(le.color);
+  ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${pulse * le.power * 0.5})`;
+  ctx.fillRect(0, 0, W, H);
+}
 
 // Le DJ est dessiné à un emplacement fixe sur la scène (pas dans la foule),
 // de face, avec les platines, selon la position qu'il a choisie.
@@ -1446,6 +1639,7 @@ function renderYoutubeControlsVisibility() {
   document.getElementById('youtube-controls').style.display = amIDJ ? 'flex' : 'none';
   document.getElementById('decor-select').disabled = !amIDJ;
   document.getElementById('decor-select').title = amIDJ ? '' : 'Seul le DJ actuel peut changer le décor.';
+  document.getElementById('light-fx-box').style.display = amIDJ ? 'block' : 'none';
 }
 
 // --- YouTube (lecture synchronisée, sans aucun compte requis) ---
@@ -1586,4 +1780,3 @@ document.addEventListener('click', unmutePlayer, { once: true });
 </script>
 </body>
 </html>
-
