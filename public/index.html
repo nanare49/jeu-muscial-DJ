@@ -369,7 +369,11 @@ socket.on('room-state', (state) => {
 socket.on('player-joined', ({ id, player }) => { players[id] = player; });
 socket.on('player-left', ({ id }) => { delete players[id]; });
 socket.on('player-moved', ({ id, x, y }) => { if (players[id]) { players[id].x = x; players[id].y = y; } });
-socket.on('player-posed', ({ id, pose }) => { if (players[id]) players[id].pose = pose; });
+socket.on('player-posed', ({ id, pose }) => {
+  if (players[id]) players[id].pose = pose;
+  if (id === selfId) renderPoseBar();
+  if (pose === 'dj_front_cannon' && id === myDjId) fireConfetti(W / 2, H * 0.42);
+});
 socket.on('player-accessory', ({ id, accessory }) => { if (players[id]) players[id].accessory = accessory; });
 socket.on('player-bubble-style', ({ id, style }) => { if (players[id]) players[id].bubbleStyle = style; });
 socket.on('player-bubble-size', ({ id, size }) => { if (players[id]) players[id].bubbleSize = size; });
@@ -397,6 +401,7 @@ function renderDjModeUI() {
   if (amICreator) document.getElementById('dj-mode-select').value = djMode;
 
   renderYoutubeControlsVisibility();
+  renderPoseBar();
 
   const queueBox = document.getElementById('dj-queue-box');
   const queueBtn = document.getElementById('dj-queue-btn');
@@ -467,20 +472,37 @@ function renderBubbleControlBar() {
 }
 
 // --- poses et accessoires ---
-const poses = ['idle', 'hands_up', 'jump', 'clap', 'dance1', 'dance2'];
-const poseLabels = { idle: 'Repos', hands_up: 'Mains en l\u2019air', jump: 'Saute', clap: 'Applaudit', dance1: 'Danse 1', dance2: 'Danse 2' };
+const festivalierPoses = ['idle', 'hands_up', 'jump', 'clap', 'dance1', 'dance2'];
+const festivalierPoseLabels = { idle: 'Repos', hands_up: 'Mains en l\u2019air', jump: 'Saute', clap: 'Applaudit', dance1: 'Danse 1', dance2: 'Danse 2' };
+const djPoses = ['dj_behind', 'dj_behind_hands', 'dj_on_deck', 'dj_front_dance', 'dj_front_cannon'];
+const djPoseLabels = {
+  dj_behind: 'Derrière les platines',
+  dj_behind_hands: 'Mains en l\u2019air',
+  dj_on_deck: 'Sur les platines',
+  dj_front_dance: 'Devant, danse',
+  dj_front_cannon: 'Canon à cotillons !'
+};
 const poseBar = document.getElementById('poseBar');
-poses.forEach(p => {
-  const btn = document.createElement('div');
-  btn.className = 'btn' + (p === 'idle' ? ' active' : '');
-  btn.textContent = poseLabels[p];
-  btn.addEventListener('click', () => {
-    socket.emit('pose', p);
-    poseBar.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
+
+function renderPoseBar() {
+  const amIDJ = selfId && selfId === myDjId;
+  const list = amIDJ ? djPoses : festivalierPoses;
+  const labels = amIDJ ? djPoseLabels : festivalierPoseLabels;
+  const currentPose = (players[selfId] && players[selfId].pose) || (amIDJ ? 'dj_behind' : 'idle');
+
+  poseBar.innerHTML = '';
+  list.forEach(p => {
+    const btn = document.createElement('div');
+    btn.className = 'btn' + (p === currentPose ? ' active' : '');
+    btn.textContent = labels[p];
+    btn.addEventListener('click', () => {
+      socket.emit('pose', p);
+      poseBar.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+    poseBar.appendChild(btn);
   });
-  poseBar.appendChild(btn);
-});
+}
 
 const accessories = [
   { id: 'none', label: 'Aucun' },
@@ -515,6 +537,7 @@ window.addEventListener('keyup', e => { keys[e.key] = false; });
 let myX = 0.5, myY = 0.6;
 function updateMovement() {
   if (!avatarConfirmed) return;
+  if (selfId && selfId === myDjId) return; // le DJ est fixé sur scène, il ne se déplace pas comme les festivaliers
   const speed = 0.006;
   if (keys['ArrowLeft']) myX -= speed;
   if (keys['ArrowRight']) myX += speed;
@@ -533,6 +556,35 @@ const decorThemes = {
   nightclub: { sky1: '#1a1024', sky2: '#040308', stage: '#0d0a14', accent: 'rgba(120,90,255,0.5)' },
   wheatfield: { sky1: '#3a2f1a', sky2: '#120e08', stage: '#2b2312', accent: 'rgba(255,200,90,0.5)' }
 };
+// --- confettis (canon du DJ) ---
+let confettiParticles = [];
+function fireConfetti(originX, originY) {
+  for (let i = 0; i < 90; i++) {
+    const spread = (Math.random() - 0.5) * 1.6;
+    confettiParticles.push({
+      x: originX, y: originY,
+      vx: Math.sin(spread) * (3 + Math.random() * 5),
+      vy: -(6 + Math.random() * 6) + Math.random() * 2,
+      hue: Math.random() * 360,
+      rot: Math.random() * 360,
+      vrot: (Math.random() - 0.5) * 20,
+      life: 90 + Math.random() * 40
+    });
+  }
+}
+function updateAndDrawConfetti() {
+  confettiParticles = confettiParticles.filter(c => c.life > 0);
+  confettiParticles.forEach(c => {
+    c.x += c.vx; c.y += c.vy; c.vy += 0.18; c.rot += c.vrot; c.life -= 1;
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot * Math.PI / 180);
+    ctx.fillStyle = `hsl(${c.hue}, 85%, 65%)`;
+    ctx.fillRect(-4, -6, 8, 12);
+    ctx.restore();
+  });
+}
+
 function drawBackground() {
   const theme = decorThemes[currentDecor] || decorThemes.mainstage;
   const grad = ctx.createRadialGradient(W/2, H*0.2, 50, W/2, H*0.2, W*0.75);
@@ -1042,11 +1094,157 @@ function drawBlobBody(c, move, accessory, color, isMe, t) {
 function loop(t) {
   ctx.clearRect(0, 0, W, H);
   drawBackground();
-  Object.entries(players).forEach(([id, p]) => drawPlayer(p, id === selfId, t));
+  Object.entries(players).forEach(([id, p]) => {
+    if (id === myDjId) drawDjOnStage(p, id === selfId, t);
+    else drawPlayer(p, id === selfId, t);
+  });
+  updateAndDrawConfetti();
   activeBubbles.forEach(positionBubble);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+// Le DJ est dessiné à un emplacement fixe sur la scène (pas dans la foule),
+// de face, avec les platines, selon la position qu'il a choisie.
+function drawDjOnStage(p, isMe, t) {
+  const cx = W / 2, cy = H * 0.42;
+  const scale = 1.15;
+  const color = p.avatarColor || p.color || '#ff5fa3';
+  const pose = p.pose || 'dj_behind';
+  const accessory = p.accessory || 'none';
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+
+  let armLift = 0, bob = 0, sway = 0;
+  if (pose === 'dj_behind') { bob = Math.sin(t / 500) * 2; sway = Math.sin(t / 700) * 2; }
+  else if (pose === 'dj_behind_hands') { armLift = 1; bob = Math.abs(Math.sin(t / 220)) * 10; }
+  else if (pose === 'dj_on_deck') { armLift = 0.6 + Math.sin(t / 180) * 0.4; bob = Math.abs(Math.sin(t / 180)) * 16; }
+  else if (pose === 'dj_front_dance') { sway = Math.sin(t / 300) * 14; armLift = 0.3 + Math.sin(t / 300) * 0.3; bob = Math.abs(Math.sin(t / 300)) * 4; }
+  else if (pose === 'dj_front_cannon') { armLift = 0.85; bob = Math.sin(t / 260) * 2; }
+
+  let djY = -20; // derrière les platines par défaut
+  if (pose === 'dj_on_deck') djY = -38;
+  else if (pose === 'dj_front_dance' || pose === 'dj_front_cannon') djY = 34;
+
+  const drawDeckFirst = pose !== 'dj_front_dance' && pose !== 'dj_front_cannon';
+
+  function drawDeckProp() {
+    ctx.fillStyle = '#2a2140';
+    roundRect(ctx, -70, -25, 140, 50, 10);
+    ctx.fill();
+    ctx.fillStyle = '#1a1526';
+    ctx.beginPath();
+    ctx.arc(-32, 0, 15, 0, Math.PI * 2);
+    ctx.arc(32, 0, 15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(-32, 0, 3.5, 0, Math.PI * 2);
+    ctx.arc(32, 0, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawDjFigure() {
+    ctx.save();
+    ctx.translate(sway, djY - bob);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(0, 44, 20, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const skinTone = '#f0cca3';
+    const armAngleLow = 0.35, armAngleHigh = Math.PI / 2 + 0.3;
+    const angle = armAngleLow + (armAngleHigh - armAngleLow) * armLift;
+    const armLen = 22, shoulderY = -6;
+    const lx = -14 - Math.cos(angle) * armLen, ly = shoulderY - Math.sin(angle) * armLen;
+    const rx = 14 + Math.cos(angle) * armLen, ry = shoulderY - Math.sin(angle) * armLen;
+
+    // corps
+    ctx.fillStyle = color;
+    roundRect(ctx, -15, -12, 30, 32, 10);
+    ctx.fill();
+
+    // bras
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 8;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-14, shoulderY); ctx.lineTo(lx, ly);
+    ctx.moveTo(14, shoulderY); ctx.lineTo(rx, ry);
+    ctx.stroke();
+    ctx.fillStyle = skinTone;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 6, 0, Math.PI * 2);
+    ctx.arc(rx, ry, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // canon à cotillons, tenu entre les mains levées
+    if (pose === 'dj_front_cannon') {
+      const cannonY = shoulderY - Math.sin(angle) * armLen - 4;
+      ctx.fillStyle = '#463a63';
+      roundRect(ctx, -8, cannonY - 8, 16, 22, 5);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(-8, cannonY - 8);
+      ctx.lineTo(8, cannonY - 8);
+      ctx.lineTo(0, cannonY - 18);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // tête + casque
+    ctx.fillStyle = skinTone;
+    ctx.beginPath();
+    ctx.arc(0, -22, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, -22, 15, Math.PI * 1.2, Math.PI * 1.8);
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(-14, -18, 4, 0, Math.PI * 2);
+    ctx.arc(14, -18, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (accessory === 'cap') {
+      ctx.fillStyle = '#2f9e6b';
+      ctx.beginPath();
+      ctx.arc(0, -23, 14.5, Math.PI * 0.9, Math.PI * 2.1);
+      ctx.fill();
+    } else if (accessory === 'hat') {
+      ctx.fillStyle = '#caa25a';
+      ctx.beginPath();
+      ctx.ellipse(0, -30, 18, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (isMe) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, -22, 20, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  if (drawDeckFirst) { drawDjFigure(); drawDeckProp(); }
+  else { drawDeckProp(); drawDjFigure(); }
+
+  ctx.restore();
+
+  ctx.fillStyle = '#e9e4f2';
+  ctx.font = '11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('🎧 ' + (p.name || ''), cx, cy - 100 * scale);
+}
 
 // --- chat ---
 const chatLog = document.getElementById('chat-log');
@@ -1123,6 +1321,11 @@ function showSpeechBubble(playerId, color, text) {
 function positionBubble(entry) {
   const p = players[entry.playerId];
   if (!p) return; // le joueur est parti entre-temps : on laisse la bulle où elle était
+  if (entry.playerId === myDjId) {
+    entry.el.style.left = (W / 2) + 'px';
+    entry.el.style.top = (H * 0.42 - 110) + 'px';
+    return;
+  }
   const scale = entry.playerId === selfId ? 1.05 : 0.9;
   entry.el.style.left = (p.x * W) + 'px';
   entry.el.style.top = (p.y * H - 90 * scale) + 'px';
