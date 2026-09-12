@@ -271,6 +271,11 @@
     <div class="btn" id="yt-forward-btn">+10s ⏩</div>
   </div>
   <button id="yt-unmute-btn" class="hidden">🔊 Activer le son</button>
+  <div class="fx-slider-row" id="yt-volume-row">
+    <label for="yt-volume">🔊 Volume</label>
+    <input type="range" id="yt-volume" min="0" max="100" step="1" value="100">
+    <span id="yt-volume-value">100</span>
+  </div>
 </div>
 
 <div id="light-fx-box" style="display:none;">
@@ -1841,6 +1846,10 @@ function renderYoutubeControlsVisibility() {
 // --- YouTube (lecture synchronisée, sans aucun compte requis) ---
 let ytPlayer = null;
 let ytPlayerReady = false;
+let ytVolume = parseInt(localStorage.getItem('ytVolume'), 10);
+if (isNaN(ytVolume) || ytVolume < 0 || ytVolume > 100) ytVolume = 100;
+document.getElementById('yt-volume').value = ytVolume;
+document.getElementById('yt-volume-value').textContent = ytVolume;
 let pendingVideo = null;       // dernier état reçu avant que le lecteur soit prêt
 let currentLoadedVideoId = null;
 let currentVideoState = null;  // dernier état connu (paused, positionSec, anchorAt, videoId)
@@ -1942,6 +1951,7 @@ window.onYouTubeIframeAPIReady = function () {
     events: {
       onReady: () => {
         ytPlayerReady = true;
+        ytPlayer.setVolume(ytVolume);
         document.getElementById('yt-unmute-btn').classList.remove('hidden');
         if (pendingVideo) {
           const cv = pendingVideo;
@@ -1966,13 +1976,20 @@ document.head.appendChild(ytScript);
 function unmutePlayer() {
   if (ytPlayer && ytPlayerReady) {
     ytPlayer.unMute();
-    ytPlayer.setVolume(100);
+    ytPlayer.setVolume(ytVolume);
     document.getElementById('yt-unmute-btn').classList.add('hidden');
   }
 }
 document.getElementById('yt-unmute-btn').addEventListener('click', unmutePlayer);
 // tentative en plus : le tout premier clic n'importe où sur la page active aussi le son
 document.addEventListener('click', unmutePlayer, { once: true });
+
+document.getElementById('yt-volume').addEventListener('input', (e) => {
+  ytVolume = parseInt(e.target.value, 10);
+  document.getElementById('yt-volume-value').textContent = ytVolume;
+  localStorage.setItem('ytVolume', ytVolume);
+  if (ytPlayer && ytPlayerReady) ytPlayer.setVolume(ytVolume);
+});
 </script>
 </body>
 </html>
