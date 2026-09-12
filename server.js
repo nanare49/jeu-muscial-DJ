@@ -62,6 +62,9 @@ io.on('connection', (socket) => {
     const room = getOrCreateRoom(currentRoomId);
     socket.join(currentRoomId);
 
+    const isFirstInRoom = Object.keys(room.players).length === 0;
+    if (isFirstInRoom) room.djId = socket.id; // le premier arrivant devient le DJ de la salle
+
     const playerIndex = Object.keys(room.players).length;
     const player = {
       name: 'Joueur ' + (playerIndex + 1),
@@ -69,7 +72,9 @@ io.on('connection', (socket) => {
       y: 0.6,
       pose: 'idle',
       accessory: 'none',
-      color: colorFor(playerIndex)
+      color: colorFor(playerIndex),
+      bubbleStyle: 'plain',       // décor de bulle choisi (festivaliers uniquement)
+      bubbleSize: isFirstInRoom ? 1.2 : 1.0 // taille de bulle (réglable par le DJ seulement)
     };
     room.players[socket.id] = player;
 
@@ -78,6 +83,7 @@ io.on('connection', (socket) => {
       decor: room.decor,
       players: room.players,
       currentVideo: room.currentVideo,
+      djId: room.djId,
       selfId: socket.id
     });
 
@@ -110,6 +116,29 @@ io.on('connection', (socket) => {
     if (!p) return;
     p.accessory = String(accessory).slice(0, 30);
     io.to(currentRoomId).emit('player-accessory', { id: socket.id, accessory: p.accessory });
+  });
+
+  // Décor de bulle : réservé aux festivaliers (pas au DJ, qui a déjà sa bulle spéciale)
+  const allowedBubbleStyles = ['plain', 'dashed', 'stars'];
+  socket.on('bubble-style', (style) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p || socket.id === room.djId) return;
+    if (!allowedBubbleStyles.includes(style)) return;
+    p.bubbleStyle = style;
+    io.to(currentRoomId).emit('player-bubble-style', { id: socket.id, style: p.bubbleStyle });
+  });
+
+  // Taille de bulle : réservée au DJ, dans une limite raisonnable
+  socket.on('bubble-size', (size) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p || socket.id !== room.djId) return;
+    const clamped = Math.max(1.0, Math.min(1.6, Number(size) || 1.2));
+    p.bubbleSize = clamped;
+    io.to(currentRoomId).emit('player-bubble-size', { id: socket.id, size: p.bubbleSize });
   });
 
   socket.on('chat', (text) => {
@@ -188,6 +217,17 @@ io.on('connection', (socket) => {
     if (room) {
       delete room.players[socket.id];
       io.to(currentRoomId).emit('player-left', { id: socket.id });
+
+      // si le DJ partait, on transmet le rôle à quelqu'un d'autre encore présent
+      if (room.djId === socket.id) {
+        const remainingIds = Object.keys(room.players);
+        room.djId = remainingIds.length > 0 ? remainingIds[0] : null;
+        if (room.djId) {
+          room.players[room.djId].bubbleSize = Math.max(room.players[room.djId].bubbleSize, 1.2);
+          io.to(currentRoomId).emit('dj-changed', room.djId);
+        }
+      }
+
       cleanupRoomIfEmpty(currentRoomId);
     }
   });
