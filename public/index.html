@@ -286,7 +286,7 @@
     <input type="color" id="fx-laser-color" value="#5ad1ff">
   </div>
   <div class="fx-subrow">
-    <label>Nombre</label>
+    <label>Départs</label>
     <input type="range" id="fx-laser-count" min="1" max="8" step="1" value="4">
     <span id="fx-laser-count-val">4</span>
   </div>
@@ -305,8 +305,17 @@
   </div>
 
   <div class="fx-row">
-    <label><input type="checkbox" id="fx-sparks-on"> Fontaine à étincelles</label>
+    <label><input type="checkbox" id="fx-sparks-on"> Fontaines à étincelles</label>
     <input type="color" id="fx-sparks-color" value="#ffd35a">
+  </div>
+  <div class="fx-subrow">
+    <label>Fontaines</label>
+    <input type="range" id="fx-sparks-count" min="4" max="10" step="1" value="4">
+    <span id="fx-sparks-count-val">4</span>
+  </div>
+  <div class="fx-subrow">
+    <label>Intensité</label>
+    <input type="range" id="fx-sparks-intensity" min="0" max="1" step="0.05" value="0.6">
   </div>
 
   <div class="fx-row">
@@ -536,7 +545,12 @@ function currentFxStateFromControls() {
       style: document.getElementById('fx-laser-style').value
     },
     fireballs: { on: document.getElementById('fx-fireballs-on').checked, color: document.getElementById('fx-fireballs-color').value },
-    sparks: { on: document.getElementById('fx-sparks-on').checked, color: document.getElementById('fx-sparks-color').value },
+    sparks: {
+      on: document.getElementById('fx-sparks-on').checked,
+      color: document.getElementById('fx-sparks-color').value,
+      count: parseInt(document.getElementById('fx-sparks-count').value, 10),
+      intensity: parseFloat(document.getElementById('fx-sparks-intensity').value)
+    },
     discoball: { on: document.getElementById('fx-discoball-on').checked, color: document.getElementById('fx-discoball-color').value },
     power: parseFloat(document.getElementById('fx-power').value),
     speed: parseFloat(document.getElementById('fx-speed').value)
@@ -544,13 +558,14 @@ function currentFxStateFromControls() {
 }
 function sendLightEffects() {
   document.getElementById('fx-laser-count-val').textContent = document.getElementById('fx-laser-count').value;
+  document.getElementById('fx-sparks-count-val').textContent = document.getElementById('fx-sparks-count').value;
   socket.emit('set-light-effects', currentFxStateFromControls());
 }
 const fxControlIds = [
   'fx-flash-on', 'fx-flash-color',
   'fx-laser-on', 'fx-laser-color', 'fx-laser-count', 'fx-laser-style',
   'fx-fireballs-on', 'fx-fireballs-color',
-  'fx-sparks-on', 'fx-sparks-color',
+  'fx-sparks-on', 'fx-sparks-color', 'fx-sparks-count', 'fx-sparks-intensity',
   'fx-discoball-on', 'fx-discoball-color',
   'fx-power', 'fx-speed'
 ];
@@ -575,6 +590,9 @@ function syncLightEffectsControls() {
   document.getElementById('fx-fireballs-color').value = le.fireballs.color;
   document.getElementById('fx-sparks-on').checked = le.sparks.on;
   document.getElementById('fx-sparks-color').value = le.sparks.color;
+  document.getElementById('fx-sparks-count').value = le.sparks.count;
+  document.getElementById('fx-sparks-count-val').textContent = le.sparks.count;
+  document.getElementById('fx-sparks-intensity').value = le.sparks.intensity;
   document.getElementById('fx-discoball-on').checked = le.discoball.on;
   document.getElementById('fx-discoball-color').value = le.discoball.color;
   document.getElementById('fx-power').value = le.power;
@@ -1305,41 +1323,51 @@ function drawLightEffectsBackground(t) {
   if (le.laser.on) drawLaserEffect(t, le.power, le.speed, le.laser);
   if (le.discoball.on) drawDiscoBallEffect(t, le.power, le.speed, le.discoball.color);
   if (le.fireballs.on) drawFireballsEffect(t, le.power, le.speed, le.fireballs.color);
-  if (le.sparks.on) drawSparksEffect(t, le.power, le.speed, le.sparks.color);
+  if (le.sparks.on) drawSparksEffect(t, le.power, le.speed, le.sparks);
 }
 
+// Plusieurs points de départ de laser répartis sur la scène (comme une rangée
+// de lyres motorisées), chacun tirant son propre faisceau.
 function drawLaserEffect(t, power, speed, laser) {
-  const originX = W / 2, originY = H * 0.16;
-  const len = H * 1.15;
-  const count = laser.count || 4;
+  const originY = H * 0.14;
+  const sourceCount = laser.count || 4;
+  const len = H * 1.1;
   const alphaHex = Math.round(80 + power * 175).toString(16).padStart(2, '0');
 
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < sourceCount; i++) {
+    const originX = W * ((i + 1) / (sourceCount + 1));
+
     let angle;
     if (laser.style === 'fan') {
-      // éventail qui s'ouvre et se referme, centré vers le bas
-      const spread = (Math.PI / 3) * (0.4 + 0.6 * ((Math.sin((t / 900) * speed) + 1) / 2));
-      const base = (i / Math.max(1, count - 1) - 0.5) * spread;
-      angle = Math.PI / 2 + base;
+      // chaque source ouvre/ferme son éventail en rythme, légèrement décalée entre sources
+      const spread = 0.9;
+      angle = Math.PI / 2 + Math.sin((t / 900) * speed + i * 0.6) * spread;
     } else if (laser.style === 'cross') {
-      // la moitié des faisceaux tourne dans un sens, l'autre moitié dans l'autre : ils se croisent
+      // une source sur deux tourne dans le sens opposé : les faisceaux se croisent
       const dir = i % 2 === 0 ? 1 : -1;
       angle = Math.PI / 2 + Math.sin((t / 700) * speed * dir + i) * 0.9;
     } else {
-      // balayage rotatif classique, faisceaux répartis uniformément
-      angle = (t / 1000) * speed + (i * Math.PI * 2) / count;
+      // balayage rotatif, chaque source déphasée pour ne pas pointer toutes pareil
+      angle = Math.PI / 2 + Math.sin((t / 1100) * speed + i * 1.4) * 1.0;
     }
+
     const x2 = originX + Math.cos(angle) * len * 0.5;
-    const y2 = originY + Math.sin(angle) * len * 0.5 + len * 0.4;
+    const y2 = originY + Math.sin(angle) * len * 0.5 + len * 0.35;
     const grad = ctx.createLinearGradient(originX, originY, x2, y2);
     grad.addColorStop(0, `${laser.color}${alphaHex}`);
     grad.addColorStop(1, `${laser.color}00`);
     ctx.strokeStyle = grad;
-    ctx.lineWidth = 2.5 + power * 3;
+    ctx.lineWidth = 2 + power * 2.5;
     ctx.beginPath();
     ctx.moveTo(originX, originY);
     ctx.lineTo(x2, y2);
     ctx.stroke();
+
+    // petit point lumineux à la source, comme un vrai projecteur
+    ctx.fillStyle = laser.color;
+    ctx.beginPath();
+    ctx.arc(originX, originY, 3, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 
@@ -1389,66 +1417,101 @@ function drawDiscoBallEffect(t, power, speed, color) {
   }
 }
 
-// Flammes verticales de chaque côté du DJ (comme des jets de flamme de scène)
+// Flammes verticales de chaque côté du DJ, façon torches de scène :
+// base fine qui s'évase en une grosse boule de feu tourbillonnante en haut.
 function drawFireballsEffect(t, power, speed, color) {
   const rgb = hexToRgb(color);
   const cycle = (Math.sin((t / 500) * speed) + 1) / 2;
   const intensity = (0.35 + 0.65 * Math.pow(cycle, 2)) * power;
   if (intensity < 0.02) return;
 
-  const baseY = H * 0.58;
-  const sideOffset = 130;
+  const baseY = H * 0.66;
+  const sideOffset = 210; // bien espacées de chaque côté du DJ
   [-1, 1].forEach(side => {
     const x = W / 2 + side * sideOffset;
-    const flameHeight = 70 + intensity * 160;
-    const flicker = Math.sin(t / 90 + side * 3) * 6;
+    const stemHeight = 90 + intensity * 170;
+    const topY = baseY - stemHeight;
+    const flicker = Math.sin(t / 90 + side * 3) * 5;
 
-    const grad = ctx.createLinearGradient(x, baseY, x, baseY - flameHeight);
-    grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${0.85 * intensity})`);
-    grad.addColorStop(0.5, `rgba(${rgb.r},${Math.round(rgb.g * 0.7)},0,${0.6 * intensity})`);
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    // base : socle sombre, comme la machine
+    ctx.fillStyle = '#1a1526';
+    roundRect(ctx, x - 12, baseY - 4, 24, 14, 3);
+    ctx.fill();
 
-    ctx.fillStyle = grad;
+    // tige de flamme, fine à la base, qui s'évase vers le haut
+    const stemGrad = ctx.createLinearGradient(x, baseY, x, topY);
+    stemGrad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${0.9 * intensity})`);
+    stemGrad.addColorStop(0.7, `rgba(255,${Math.round(180 + rgb.g * 0.2)},80,${0.7 * intensity})`);
+    stemGrad.addColorStop(1, `rgba(255,255,255,${0.3 * intensity})`);
+    ctx.fillStyle = stemGrad;
     ctx.beginPath();
-    ctx.moveTo(x - 14, baseY);
-    ctx.quadraticCurveTo(x - 20 + flicker, baseY - flameHeight * 0.5, x + flicker, baseY - flameHeight);
-    ctx.quadraticCurveTo(x + 20 + flicker, baseY - flameHeight * 0.5, x + 14, baseY);
+    ctx.moveTo(x - 8, baseY);
+    ctx.quadraticCurveTo(x - 16 + flicker, baseY - stemHeight * 0.55, x - 22 + flicker, topY + 10);
+    ctx.quadraticCurveTo(x + flicker, topY - 10, x + 22 + flicker, topY + 10);
+    ctx.quadraticCurveTo(x + 16 + flicker, baseY - stemHeight * 0.55, x + 8, baseY);
     ctx.closePath();
     ctx.fill();
+
+    // boule de feu tourbillonnante au sommet (plusieurs blobs superposés qui flickent)
+    const ballR = 26 + intensity * 30;
+    for (let i = 0; i < 5; i++) {
+      const seed = i * 17.3 + side * 4;
+      const ox = Math.sin(t / 140 + seed) * ballR * 0.35;
+      const oy = Math.cos(t / 170 + seed) * ballR * 0.3;
+      const r = ballR * (0.55 + 0.35 * ((Math.sin(t / 200 + seed) + 1) / 2));
+      const grad = ctx.createRadialGradient(x + ox, topY + oy, 0, x + ox, topY + oy, r);
+      const hueMix = i % 2 === 0 ? `rgba(255,255,220,${0.5 * intensity})` : `rgba(${rgb.r},${rgb.g},${rgb.b},${0.55 * intensity})`;
+      grad.addColorStop(0, hueMix);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x + ox, topY + oy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
   });
 }
 
-// Fontaine à étincelles : jaillissent d'un point fixe, comme une vraie fontaine
-function drawSparksEffect(t, power, speed, color) {
-  const rgb = hexToRgb(color);
-  const originX = W / 2, originY = H * 0.62;
-  const count = Math.round(18 + power * 35);
-  const gravity = 620; // px/s²
+// Plusieurs fontaines à étincelles, réparties près du DJ, avec une vraie
+// trajectoire de jaillissement (montée puis retombée sous la gravité).
+function drawSparksEffect(t, power, speed, sparks) {
+  const rgb = hexToRgb(sparks.color);
+  const fountainCount = sparks.count || 4;
+  const intensity = sparks.intensity != null ? sparks.intensity : 0.6;
+  const originY = H * 0.5; // juste devant/en dessous du DJ, plus proche que la version précédente
+  const spread = 340; // largeur totale sur laquelle les fontaines sont réparties
 
-  for (let i = 0; i < count; i++) {
-    const seed = i * 53.7;
-    const cycleDuration = 1.1 / Math.max(0.3, speed);
-    const tau = (((t / 1000) * speed + seed) % cycleDuration);
-    const angle = Math.PI / 2 + Math.sin(seed) * 0.5; // vers le haut, légèrement évasé
-    const v0 = 220 + (seed % 100);
-    const vx = Math.cos(angle) * v0 * 0.5;
-    const vy = -Math.sin(angle) * v0;
+  for (let f = 0; f < fountainCount; f++) {
+    const originX = W / 2 + (f / Math.max(1, fountainCount - 1) - 0.5) * spread;
+    const particlesPerFountain = Math.round(14 + intensity * 30);
+    const gravity = 900;
+    const jetHeight = 180 + intensity * 320; // beaucoup plus haut qu'avant
 
-    const x = originX + vx * tau;
-    const y = originY + vy * tau + 0.5 * gravity * tau * tau;
-    if (y > originY + 10) continue; // repasse sous le point de départ : invisible ce cycle-ci
+    for (let i = 0; i < particlesPerFountain; i++) {
+      const seed = f * 971.3 + i * 53.7;
+      const cycleDuration = 1.0 / Math.max(0.3, speed);
+      const tau = (((t / 1000) * speed + seed) % cycleDuration);
+      const angle = Math.PI / 2 + Math.sin(seed) * 0.35;
+      const v0 = Math.sqrt(2 * gravity * jetHeight) * (0.7 + (seed % 100) / 300);
+      const vx = Math.cos(angle) * v0 * 0.4;
+      const vy = -Math.sin(angle) * v0;
 
-    const life = 1 - tau / cycleDuration;
-    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${Math.max(0, life) * power})`;
-    ctx.beginPath();
-    ctx.arc(x, y, 1.5 + life * 1.5, 0, Math.PI * 2);
+      const x = originX + vx * tau;
+      const y = originY + vy * tau + 0.5 * gravity * tau * tau;
+      if (y > originY + 8) continue;
+
+      const life = 1 - tau / cycleDuration;
+      const size = (1.5 + life * 2) * (0.7 + intensity * 0.6);
+      ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${Math.max(0, life) * power})`;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // petit tube d'où jaillit chaque fontaine
+    ctx.fillStyle = '#2a2438';
+    roundRect(ctx, originX - 7, originY, 14, 16, 3);
     ctx.fill();
   }
-
-  // petit tube d'où jaillit la fontaine
-  ctx.fillStyle = '#2a2438';
-  roundRect(ctx, originX - 6, originY, 12, 14, 3);
-  ctx.fill();
 }
 
 function drawFlashEffect(t) {
