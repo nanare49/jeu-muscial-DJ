@@ -672,7 +672,10 @@ document.getElementById('avatar-confirm-btn').addEventListener('click', () => {
     avatarType: avatarTypes[avatarTypeIndex],
     avatarColor: avatarColorChoices[avatarColorIndex],
     name: chosenName,
-    token: myPlayerToken
+    token: myPlayerToken,
+    // jusqu'où la piste descend sur CET écran (juste sous la barrière) : sert au
+    // serveur à ne jamais faire apparaître un bonus/malus hors d'atteinte.
+    minY: stageMinY()
   });
 });
 
@@ -732,6 +735,7 @@ socket.on('room-state', (state) => {
   if (state.round) {
     roundActive = !!state.round.active;
     roundItems = state.round.items || [];
+    discoTiles = state.round.discoTiles || [];
     roundCountdownEndAt = state.round.countdownEndAt || null;
   }
   renderProfileLine();
@@ -776,6 +780,7 @@ socket.on('dj-turn-result', (result) => {
 // --- mini-jeu de ramassage d'objets sur la piste (bonus/malus) ---
 let roundActive = false;
 let roundItems = [];
+let discoTiles = [];
 let roundCountdownEndAt = null;
 let myStatusEffect = null;
 
@@ -795,6 +800,7 @@ socket.on('round-state', (r) => {
   roundCountdownEndAt = r.countdownEndAt || null;
 });
 socket.on('round-items', (items) => { roundItems = items || []; });
+socket.on('disco-tiles', (tiles) => { discoTiles = tiles || []; });
 socket.on('item-collected', ({ itemId }) => {
   roundItems = roundItems.filter(it => it.id !== itemId);
 });
@@ -850,6 +856,35 @@ function drawRoundItems(t) {
     ctx.restore();
   });
   ctx.textBaseline = 'alphabetic';
+}
+
+// Piste lumineuse façon dancefloor disco : des cases éteintes, dont certaines
+// s'allument de temps en temps et rapportent 1 à 5 pièces à qui marche dessus.
+function drawDiscoTiles(t) {
+  if (!roundActive || !discoTiles.length) return;
+  const size = Math.max(24, Math.min(46, W / 18));
+  discoTiles.forEach(tile => {
+    const x = tile.x * W, y = tile.y * H;
+    ctx.save();
+    if (tile.lit) {
+      const pulse = 0.75 + Math.sin(t / 180 + tile.id) * 0.25;
+      ctx.shadowColor = 'rgba(255, 211, 90, 0.9)';
+      ctx.shadowBlur = 18 * pulse;
+      ctx.fillStyle = `rgba(255, ${180 + Math.round(40 * pulse)}, 90, ${0.55 + 0.25 * pulse})`;
+      ctx.fillRect(x - size / 2, y - size / 2, size, size);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#ffe08a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - size / 2, y - size / 2, size, size);
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.035)';
+      ctx.fillRect(x - size / 2, y - size / 2, size, size);
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x - size / 2, y - size / 2, size, size);
+    }
+    ctx.restore();
+  });
 }
 socket.on('dj-mode-changed', ({ mode, queue }) => { djMode = mode; djQueue = queue; renderDjModeUI(); });
 socket.on('dj-queue-changed', (queue) => { djQueue = queue; renderDjModeUI(); });
@@ -2044,6 +2079,7 @@ function loop(t) {
   ctx.clearRect(0, 0, W, H);
   drawBackground(t);
   drawLightEffectsBackground(t);
+  drawDiscoTiles(t);
   drawRoundItems(t);
   Object.entries(players).forEach(([id, p]) => {
     if (id === myDjId) drawDjOnStage(p, id === selfId, t);
