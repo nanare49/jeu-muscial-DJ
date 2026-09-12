@@ -180,6 +180,7 @@
     <input id="youtube-input" placeholder="Colle un lien YouTube...">
     <button id="youtube-launch-btn">Lancer</button>
   </div>
+  <div id="youtube-non-dj-msg" style="display:none; font-size:11px; color:var(--muted); margin-top:4px;">🎧 Seul le DJ actuel peut choisir la musique.</div>
   <div id="youtube-now-playing">Aucune vidéo en cours.</div>
   <div id="youtube-player-wrap"><div id="youtube-player"></div></div>
   <div id="youtube-controls">
@@ -286,6 +287,8 @@ function renderDjModeUI() {
   const amICreator = selfId && selfId === myCreatorId;
   modeRow.style.display = amICreator ? 'block' : 'none';
   if (amICreator) document.getElementById('dj-mode-select').value = djMode;
+
+  renderYoutubeControlsVisibility();
 
   const queueBox = document.getElementById('dj-queue-box');
   const queueBtn = document.getElementById('dj-queue-btn');
@@ -669,6 +672,13 @@ function positionBubble(entry) {
   const scale = entry.playerId === selfId ? 1.05 : 0.9;
   entry.el.style.left = (p.x * W) + 'px';
   entry.el.style.top = (p.y * H - 90 * scale) + 'px';
+}
+
+function renderYoutubeControlsVisibility() {
+  const amIDJ = selfId && selfId === myDjId;
+  document.getElementById('youtube-row').style.display = amIDJ ? 'flex' : 'none';
+  document.getElementById('youtube-non-dj-msg').style.display = amIDJ ? 'none' : 'block';
+  document.getElementById('youtube-controls').style.display = amIDJ ? 'flex' : 'none';
 }
 
 // --- YouTube (lecture synchronisée, sans aucun compte requis) ---
