@@ -45,8 +45,13 @@ function getOrCreateRoom(roomId) {
       djMode: 'fixed', // 'fixed' (le créateur reste DJ) ou 'queue' (file d'attente façon plug.dj)
       djQueue: [],      // liste d'ids en attente de leur tour, en mode 'queue'
       lightEffects: {
-        flash: false, laser: false, fireballs: false, sparks: false, discoball: false,
-        power: 0.6, speed: 1.0, color: '#ff5fa3'
+        flash: { on: false, color: '#ff5fa3' },
+        laser: { on: false, color: '#5ad1ff', count: 4, style: 'rotating' },
+        fireballs: { on: false, color: '#ff7a3d' },
+        sparks: { on: false, color: '#ffd35a' },
+        discoball: { on: false, color: '#ffffff' },
+        power: 0.6,
+        speed: 1.0
       }
     });
   }
@@ -286,23 +291,7 @@ io.on('connection', (socket) => {
     if (!currentRoomId || !payload) return;
     const room = rooms.get(currentRoomId);
     if (!room || socket.id !== room.djId) return;
-
-    const clampedPower = Math.max(0, Math.min(1, Number(payload.power)));
-    const clampedSpeed = Math.max(0.3, Math.min(2.5, Number(payload.speed)));
-    const validColor = typeof payload.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(payload.color)
-      ? payload.color
-      : room.lightEffects.color;
-
-    room.lightEffects = {
-      flash: !!payload.flash,
-      laser: !!payload.laser,
-      fireballs: !!payload.fireballs,
-      sparks: !!payload.sparks,
-      discoball: !!payload.discoball,
-      power: Number.isFinite(clampedPower) ? clampedPower : room.lightEffects.power,
-      speed: Number.isFinite(clampedSpeed) ? clampedSpeed : room.lightEffects.speed,
-      color: validColor
-    };
+    room.lightEffects = sanitizeLightEffects(payload, room.lightEffects);
     io.to(currentRoomId).emit('light-effects-changed', room.lightEffects);
   });
 
@@ -340,6 +329,43 @@ io.on('connection', (socket) => {
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
+}
+
+const validLaserStyles = ['rotating', 'fan', 'cross'];
+function isHexColor(c) {
+  return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
+}
+function sanitizeLightEffects(payload, previous) {
+  const power = Number(payload.power);
+  const speed = Number(payload.speed);
+  const laserIn = payload.laser || {};
+  const laserCountRaw = Math.round(Number(laserIn.count));
+  return {
+    flash: {
+      on: !!(payload.flash && payload.flash.on),
+      color: isHexColor(payload.flash && payload.flash.color) ? payload.flash.color : previous.flash.color
+    },
+    laser: {
+      on: !!laserIn.on,
+      color: isHexColor(laserIn.color) ? laserIn.color : previous.laser.color,
+      count: Number.isFinite(laserCountRaw) ? clamp(laserCountRaw, 1, 8) : previous.laser.count,
+      style: validLaserStyles.includes(laserIn.style) ? laserIn.style : previous.laser.style
+    },
+    fireballs: {
+      on: !!(payload.fireballs && payload.fireballs.on),
+      color: isHexColor(payload.fireballs && payload.fireballs.color) ? payload.fireballs.color : previous.fireballs.color
+    },
+    sparks: {
+      on: !!(payload.sparks && payload.sparks.on),
+      color: isHexColor(payload.sparks && payload.sparks.color) ? payload.sparks.color : previous.sparks.color
+    },
+    discoball: {
+      on: !!(payload.discoball && payload.discoball.on),
+      color: isHexColor(payload.discoball && payload.discoball.color) ? payload.discoball.color : previous.discoball.color
+    },
+    power: Number.isFinite(power) ? clamp(power, 0, 1) : previous.power,
+    speed: Number.isFinite(speed) ? clamp(speed, 0.3, 2.5) : previous.speed
+  };
 }
 
 // Fait passer la main au prochain de la file d'attente, s'il y en a un.
