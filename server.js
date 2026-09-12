@@ -37,7 +37,14 @@ function generateRoomId() {
 
 function getOrCreateRoom(roomId) {
   if (!rooms.has(roomId)) {
-    rooms.set(roomId, { decor: 'mainstage', players: {}, currentVideo: null });
+    rooms.set(roomId, {
+      decor: 'mainstage',
+      players: {},
+      currentVideo: null,
+      creatorId: null,
+      djMode: 'fixed', // 'fixed' (le créateur reste DJ) ou 'queue' (file d'attente façon plug.dj)
+      djQueue: []       // liste d'ids en attente de leur tour, en mode 'queue'
+    });
   }
   return rooms.get(roomId);
 }
@@ -63,7 +70,10 @@ io.on('connection', (socket) => {
     socket.join(currentRoomId);
 
     const isFirstInRoom = Object.keys(room.players).length === 0;
-    if (isFirstInRoom) room.djId = socket.id; // le premier arrivant devient le DJ de la salle
+    if (isFirstInRoom) {
+      room.djId = socket.id; // le premier arrivant devient le DJ de la salle
+      room.creatorId = socket.id; // lui seul pourra choisir le mode DJ unique / file d'attente
+    }
 
     const playerIndex = Object.keys(room.players).length;
     const player = {
@@ -84,6 +94,9 @@ io.on('connection', (socket) => {
       players: room.players,
       currentVideo: room.currentVideo,
       djId: room.djId,
+      creatorId: room.creatorId,
+      djMode: room.djMode,
+      djQueue: room.djQueue,
       selfId: socket.id
     });
 
@@ -139,6 +152,42 @@ io.on('connection', (socket) => {
     const clamped = Math.max(1.0, Math.min(1.6, Number(size) || 1.2));
     p.bubbleSize = clamped;
     io.to(currentRoomId).emit('player-bubble-size', { id: socket.id, size: p.bubbleSize });
+  });
+
+  // Le créateur de la salle choisit : DJ unique (par défaut) ou file d'attente façon plug.dj
+  socket.on('set-dj-mode', (mode) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || socket.id !== room.creatorId) return;
+    room.djMode = mode === 'queue' ? 'queue' : 'fixed';
+    if (room.djMode === 'fixed') room.djQueue = [];
+    io.to(currentRoomId).emit('dj-mode-changed', { mode: room.djMode, queue: room.djQueue });
+  });
+
+  socket.on('join-dj-queue', () => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || room.djMode !== 'queue') return;
+    if (socket.id === room.djId) return; // déjà DJ, pas besoin de faire la queue
+    if (!room.djQueue.includes(socket.id)) room.djQueue.push(socket.id);
+    io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
+  });
+
+  socket.on('leave-dj-queue', () => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room) return;
+    room.djQueue = room.djQueue.filter(id => id !== socket.id);
+    io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
+  });
+
+  // Le DJ actuel passe la main au suivant dans la file (ou ça se déclenche
+  // automatiquement côté client quand la vidéo en cours se termine)
+  socket.on('next-dj', () => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || room.djMode !== 'queue' || socket.id !== room.djId) return;
+    advanceDjQueue(room, currentRoomId);
   });
 
   socket.on('chat', (text) => {
@@ -216,17 +265,25 @@ io.on('connection', (socket) => {
     const room = rooms.get(currentRoomId);
     if (room) {
       delete room.players[socket.id];
+      room.djQueue = room.djQueue.filter(id => id !== socket.id);
       io.to(currentRoomId).emit('player-left', { id: socket.id });
 
-      // si le DJ partait, on transmet le rôle à quelqu'un d'autre encore présent
+      // si le DJ partait, on transmet le rôle : à la file d'attente si elle existe,
+      // sinon à n'importe qui d'autre encore présent
       if (room.djId === socket.id) {
-        const remainingIds = Object.keys(room.players);
-        room.djId = remainingIds.length > 0 ? remainingIds[0] : null;
-        if (room.djId) {
-          room.players[room.djId].bubbleSize = Math.max(room.players[room.djId].bubbleSize, 1.2);
-          io.to(currentRoomId).emit('dj-changed', room.djId);
+        const advanced = room.djMode === 'queue' && advanceDjQueue(room, currentRoomId);
+        if (!advanced) {
+          const remainingIds = Object.keys(room.players);
+          room.djId = remainingIds.length > 0 ? remainingIds[0] : null;
+          if (room.djId) {
+            room.players[room.djId].bubbleSize = Math.max(room.players[room.djId].bubbleSize, 1.2);
+            io.to(currentRoomId).emit('dj-changed', room.djId);
+          }
         }
       }
+
+      // si le créateur partait, la salle n'a plus personne pour changer le mode DJ —
+      // ce n'est pas grave, le mode déjà choisi continue de s'appliquer tel quel
 
       cleanupRoomIfEmpty(currentRoomId);
     }
@@ -235,6 +292,20 @@ io.on('connection', (socket) => {
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
+}
+
+// Fait passer la main au prochain de la file d'attente, s'il y en a un.
+// Retourne true si un changement de DJ a eu lieu.
+function advanceDjQueue(room, roomId) {
+  if (room.djQueue.length === 0) return false;
+  const nextDjId = room.djQueue.shift();
+  room.djId = nextDjId;
+  if (room.players[nextDjId]) {
+    room.players[nextDjId].bubbleSize = Math.max(room.players[nextDjId].bubbleSize || 1.0, 1.2);
+  }
+  io.to(roomId).emit('dj-changed', room.djId);
+  io.to(roomId).emit('dj-queue-changed', room.djQueue);
+  return true;
 }
 
 server.listen(PORT, () => {
