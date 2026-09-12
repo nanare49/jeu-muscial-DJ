@@ -48,7 +48,7 @@ function getOrCreateRoom(roomId) {
         flash: { on: false, color: '#ff5fa3' },
         laser: { on: false, color: '#5ad1ff', count: 4, style: 'rotating' },
         fireballs: { on: false, color: '#ff7a3d' },
-        sparks: { on: false, color: '#ffd35a' },
+        sparks: { on: false, color: '#ffd35a', count: 4, intensity: 0.6 },
         discoball: { on: false, color: '#ffffff' },
         power: 0.6,
         speed: 1.0
@@ -340,6 +340,9 @@ function sanitizeLightEffects(payload, previous) {
   const speed = Number(payload.speed);
   const laserIn = payload.laser || {};
   const laserCountRaw = Math.round(Number(laserIn.count));
+  const sparksIn = payload.sparks || {};
+  const sparksCountRaw = Math.round(Number(sparksIn.count));
+  const sparksIntensity = Number(sparksIn.intensity);
   return {
     flash: {
       on: !!(payload.flash && payload.flash.on),
@@ -356,8 +359,10 @@ function sanitizeLightEffects(payload, previous) {
       color: isHexColor(payload.fireballs && payload.fireballs.color) ? payload.fireballs.color : previous.fireballs.color
     },
     sparks: {
-      on: !!(payload.sparks && payload.sparks.on),
-      color: isHexColor(payload.sparks && payload.sparks.color) ? payload.sparks.color : previous.sparks.color
+      on: !!sparksIn.on,
+      color: isHexColor(sparksIn.color) ? sparksIn.color : previous.sparks.color,
+      count: Number.isFinite(sparksCountRaw) ? clamp(sparksCountRaw, 4, 10) : previous.sparks.count,
+      intensity: Number.isFinite(sparksIntensity) ? clamp(sparksIntensity, 0, 1) : previous.sparks.intensity
     },
     discoball: {
       on: !!(payload.discoball && payload.discoball.on),
