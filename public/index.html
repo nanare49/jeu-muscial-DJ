@@ -162,6 +162,16 @@
     <option value="nightclub">Boîte de nuit</option>
     <option value="wheatfield">Champ de blé</option>
   </select>
+  <div id="dj-mode-row" style="display:none; margin-top:8px; gap:6px;">
+    <select id="dj-mode-select" style="width:100%; background:#1d1829; border:1px solid var(--line); color:var(--text); border-radius:6px; padding:6px 8px; font-size:12px;">
+      <option value="fixed">DJ unique (moi)</option>
+      <option value="queue">File d'attente (façon plug.dj)</option>
+    </select>
+  </div>
+  <div id="dj-queue-box" style="display:none; margin-top:8px;">
+    <div id="dj-queue-list" style="font-size:11px; color:var(--muted); margin-bottom:6px;"></div>
+    <button id="dj-queue-btn" class="btn" style="width:100%;"></button>
+  </div>
 </div>
 
 <div id="youtube-box">
@@ -210,6 +220,9 @@ let selfId = null;
 let players = {};
 let currentDecor = 'mainstage';
 let myDjId = null;
+let myCreatorId = null;
+let djMode = 'fixed';
+let djQueue = [];
 
 const urlParams = new URLSearchParams(window.location.search);
 const requestedRoom = urlParams.get('room') || '';
@@ -238,7 +251,11 @@ socket.on('room-state', (state) => {
   }
 
   myDjId = state.djId;
+  myCreatorId = state.creatorId;
+  djMode = state.djMode || 'fixed';
+  djQueue = state.djQueue || [];
   renderBubbleControlBar();
+  renderDjModeUI();
 });
 socket.on('player-joined', ({ id, player }) => { players[id] = player; });
 socket.on('player-left', ({ id }) => { delete players[id]; });
@@ -247,7 +264,9 @@ socket.on('player-posed', ({ id, pose }) => { if (players[id]) players[id].pose 
 socket.on('player-accessory', ({ id, accessory }) => { if (players[id]) players[id].accessory = accessory; });
 socket.on('player-bubble-style', ({ id, style }) => { if (players[id]) players[id].bubbleStyle = style; });
 socket.on('player-bubble-size', ({ id, size }) => { if (players[id]) players[id].bubbleSize = size; });
-socket.on('dj-changed', (djId) => { myDjId = djId; renderBubbleControlBar(); });
+socket.on('dj-changed', (djId) => { myDjId = djId; renderBubbleControlBar(); renderDjModeUI(); });
+socket.on('dj-mode-changed', ({ mode, queue }) => { djMode = mode; djQueue = queue; renderDjModeUI(); });
+socket.on('dj-queue-changed', (queue) => { djQueue = queue; renderDjModeUI(); });
 socket.on('decor-changed', (decor) => {
   currentDecor = decor;
   document.getElementById('decor-select').value = decor;
@@ -256,6 +275,45 @@ socket.on('decor-changed', (decor) => {
 document.getElementById('decor-select').addEventListener('change', (e) => {
   socket.emit('decor', e.target.value);
 });
+
+// --- mode DJ (unique / file d'attente), réservé au créateur de la salle ---
+document.getElementById('dj-mode-select').addEventListener('change', (e) => {
+  socket.emit('set-dj-mode', e.target.value);
+});
+
+function renderDjModeUI() {
+  const modeRow = document.getElementById('dj-mode-row');
+  const amICreator = selfId && selfId === myCreatorId;
+  modeRow.style.display = amICreator ? 'block' : 'none';
+  if (amICreator) document.getElementById('dj-mode-select').value = djMode;
+
+  const queueBox = document.getElementById('dj-queue-box');
+  const queueBtn = document.getElementById('dj-queue-btn');
+  const queueList = document.getElementById('dj-queue-list');
+
+  if (djMode !== 'queue') {
+    queueBox.style.display = 'none';
+    return;
+  }
+  queueBox.style.display = 'block';
+
+  const names = djQueue.map(id => (players[id] && players[id].name) || '?');
+  queueList.textContent = names.length ? ('File : ' + names.join(', ')) : 'Personne en attente.';
+
+  const amIDJ = selfId === myDjId;
+  const amInQueue = djQueue.includes(selfId);
+
+  if (amIDJ) {
+    queueBtn.textContent = '⏭ Passer la main';
+    queueBtn.onclick = () => socket.emit('next-dj');
+  } else if (amInQueue) {
+    queueBtn.textContent = 'Quitter la file';
+    queueBtn.onclick = () => socket.emit('leave-dj-queue');
+  } else {
+    queueBtn.textContent = '🎧 Rejoindre la file';
+    queueBtn.onclick = () => socket.emit('join-dj-queue');
+  }
+}
 
 // --- panneau adapté au rôle : curseur de taille pour le DJ, décor de bulle pour les autres ---
 function renderBubbleControlBar() {
@@ -722,6 +780,13 @@ window.onYouTubeIframeAPIReady = function () {
           const cv = pendingVideo;
           pendingVideo = null;
           applyVideoState(cv); // recalcule tout depuis zéro, maintenant que le lecteur est prêt
+        }
+      },
+      onStateChange: (event) => {
+        // quand la vidéo se termine, si on est le DJ et que le mode file d'attente
+        // est actif, on passe automatiquement la main à la personne suivante
+        if (event.data === YT.PlayerState.ENDED && selfId === myDjId && djMode === 'queue') {
+          socket.emit('next-dj');
         }
       }
     }
