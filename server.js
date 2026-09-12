@@ -90,7 +90,7 @@ io.on('connection', (socket) => {
       name: requestedName || ('Joueur ' + (playerIndex + 1)),
       x: 0.5,
       y: 0.6,
-      pose: 'idle',
+      pose: isFirstInRoom ? 'dj_behind' : 'idle',
       accessory: 'none',
       color: colorFor(playerIndex),
       avatarType: allowedAvatarTypes.includes(requestedAvatarType) ? requestedAvatarType : 'human',
@@ -292,7 +292,9 @@ io.on('connection', (socket) => {
           room.djId = remainingIds.length > 0 ? remainingIds[0] : null;
           if (room.djId) {
             room.players[room.djId].bubbleSize = Math.max(room.players[room.djId].bubbleSize, 1.2);
+            room.players[room.djId].pose = 'dj_behind';
             io.to(currentRoomId).emit('dj-changed', room.djId);
+            io.to(currentRoomId).emit('player-posed', { id: room.djId, pose: 'dj_behind' });
           }
         }
       }
@@ -313,11 +315,21 @@ function clamp(v, min, max) {
 // Retourne true si un changement de DJ a eu lieu.
 function advanceDjQueue(room, roomId) {
   if (room.djQueue.length === 0) return false;
+  const previousDjId = room.djId;
   const nextDjId = room.djQueue.shift();
   room.djId = nextDjId;
-  if (room.players[nextDjId]) {
-    room.players[nextDjId].bubbleSize = Math.max(room.players[nextDjId].bubbleSize || 1.0, 1.2);
+
+  // l'ancien DJ redevient un festivalier normal, le nouveau prend sa place sur scène
+  if (room.players[previousDjId]) {
+    room.players[previousDjId].pose = 'idle';
+    io.to(roomId).emit('player-posed', { id: previousDjId, pose: 'idle' });
   }
+  if (room.players[nextDjId]) {
+    room.players[nextDjId].pose = 'dj_behind';
+    room.players[nextDjId].bubbleSize = Math.max(room.players[nextDjId].bubbleSize || 1.0, 1.2);
+    io.to(roomId).emit('player-posed', { id: nextDjId, pose: 'dj_behind' });
+  }
+
   io.to(roomId).emit('dj-changed', room.djId);
   io.to(roomId).emit('dj-queue-changed', room.djQueue);
   return true;
