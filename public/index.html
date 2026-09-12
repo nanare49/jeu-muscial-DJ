@@ -679,6 +679,8 @@ function renderYoutubeControlsVisibility() {
   document.getElementById('youtube-row').style.display = amIDJ ? 'flex' : 'none';
   document.getElementById('youtube-non-dj-msg').style.display = amIDJ ? 'none' : 'block';
   document.getElementById('youtube-controls').style.display = amIDJ ? 'flex' : 'none';
+  document.getElementById('decor-select').disabled = !amIDJ;
+  document.getElementById('decor-select').title = amIDJ ? '' : 'Seul le DJ actuel peut changer le décor.';
 }
 
 // --- YouTube (lecture synchronisée, sans aucun compte requis) ---
