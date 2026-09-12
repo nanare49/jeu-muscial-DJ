@@ -20,7 +20,7 @@
     color: var(--text);
     overflow: hidden;
   }
-  canvas { position: fixed; inset: 0; }
+  #stage { position: fixed; inset: 0; }
   .panel {
     position: fixed; left: 16px; top: 16px; z-index: 20;
     background: rgba(20, 16, 28, 0.9);
@@ -552,6 +552,12 @@ function drawBackground() {
 
 function roundRect(c, x, y, w, h, r) {
   c.beginPath();
+  traceRoundRect(c, x, y, w, h, r);
+}
+
+// trace un rectangle arrondi SANS effacer le tracé en cours (utile pour dessiner
+// plusieurs formes — ex: les deux jambes — avant un seul remplissage commun)
+function traceRoundRect(c, x, y, w, h, r) {
   c.moveTo(x + r, y);
   c.arcTo(x + w, y, x + w, y + h, r);
   c.arcTo(x + w, y + h, x, y + h, r);
@@ -632,12 +638,14 @@ function drawHumanBody(c, move, accessory, color, isMe, t) {
 
   const pantsColor = '#2a2438';
   c.fillStyle = pantsColor;
-  roundRect(c, -13, 16, 10, 20, 4);
-  roundRect(c, 3, 16, 10, 20, 4);
+  c.beginPath();
+  traceRoundRect(c, -13, 16, 10, 20, 4);
+  traceRoundRect(c, 3, 16, 10, 20, 4);
   c.fill();
   c.fillStyle = '#1c1626';
-  roundRect(c, -14, 33, 12, 7, 3);
-  roundRect(c, 2, 33, 12, 7, 3);
+  c.beginPath();
+  traceRoundRect(c, -14, 33, 12, 7, 3);
+  traceRoundRect(c, 2, 33, 12, 7, 3);
   c.fill();
 
   c.fillStyle = color;
@@ -727,8 +735,9 @@ function drawRobotBody(c, move, accessory, color, isMe, t) {
 
   // jambes bloc
   c.fillStyle = '#3a3a44';
-  roundRect(c, -13 - (legSpread - 6), 18, 10, 18, 3);
-  roundRect(c, 3 + (legSpread - 6), 18, 10, 18, 3);
+  c.beginPath();
+  traceRoundRect(c, -13 - (legSpread - 6), 18, 10, 18, 3);
+  traceRoundRect(c, 3 + (legSpread - 6), 18, 10, 18, 3);
   c.fill();
 
   // corps
@@ -743,8 +752,9 @@ function drawRobotBody(c, move, accessory, color, isMe, t) {
   // bras (blocs qui se lèvent)
   const armY = -6 - armLift * 22;
   c.fillStyle = '#3a3a44';
-  roundRect(c, -30, armY, 10, 20, 4);
-  roundRect(c, 20, armY, 10, 20, 4);
+  c.beginPath();
+  traceRoundRect(c, -30, armY, 10, 20, 4);
+  traceRoundRect(c, 20, armY, 10, 20, 4);
   c.fill();
 
   // tête
@@ -787,8 +797,9 @@ function drawAlienBody(c, move, accessory, color, isMe, t) {
   drawShadow(c, sway, bob);
 
   c.fillStyle = color;
-  roundRect(c, -10, 8, 8, 16, 3);
-  roundRect(c, 2, 8, 8, 16, 3);
+  c.beginPath();
+  traceRoundRect(c, -10, 8, 8, 16, 3);
+  traceRoundRect(c, 2, 8, 8, 16, 3);
   c.fill();
 
   c.fillStyle = color;
@@ -903,8 +914,9 @@ function drawDragonBody(c, move, accessory, color, isMe, t) {
 
   // jambes
   c.fillStyle = color;
-  roundRect(c, -12, 14, 8, 14, 3);
-  roundRect(c, 4, 14, 8, 14, 3);
+  c.beginPath();
+  traceRoundRect(c, -12, 14, 8, 14, 3);
+  traceRoundRect(c, 4, 14, 8, 14, 3);
   c.fill();
 
   // corps
