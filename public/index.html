@@ -170,6 +170,14 @@
     letter-spacing: -0.02em;
   }
 
+  /* --- stroboscope plein écran, déclenché sur les "drops" simulés de la
+     musique : par-dessus absolument tout, y compris les cadres. --- */
+  #strobe-overlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: #fff; opacity: 0; display: none;
+    pointer-events: none;
+  }
+
   #shop-toggle-btn {
     position: fixed; left: 16px; bottom: 16px; z-index: 20;
     background:
@@ -385,6 +393,11 @@
   <div class="drag-handle" title="Déplacer ce cadre">⠿</div>
   <h2>Effets lumineux</h2>
 
+  <div class="fx-row" id="fx-auto-row">
+    <label><input type="checkbox" id="fx-auto-on"> 🤖 Suivre la musique automatiquement</label>
+  </div>
+
+  <div id="fx-manual-controls">
   <div class="fx-row">
     <label><input type="checkbox" id="fx-flash-on"> Flash</label>
     <input type="color" id="fx-flash-color" value="#ff5fa3">
@@ -449,9 +462,11 @@
     <label>Vitesse</label>
     <input type="range" id="fx-speed" min="0.3" max="2.5" step="0.1" value="1">
   </div>
+  </div>
 </div>
 
 <div id="round-countdown"></div>
+<div id="strobe-overlay"></div>
 
 <button id="shop-toggle-btn">🛍 Boutique</button>
 <div id="shop-box" style="display:none;">
@@ -573,7 +588,8 @@ let currentLightEffects = {
   fireballs: { on: false, color: '#ff7a3d', count: 2 },
   sparks: { on: false, color: '#ffd35a' },
   discoball: { on: false, color: '#ffffff' },
-  power: 0.6, speed: 1.0
+  power: 0.6, speed: 1.0,
+  autoMode: false
 };
 let avatarConfirmed = false;
 
@@ -737,6 +753,7 @@ socket.on('room-state', (state) => {
     roundItems = state.round.items || [];
     discoTiles = state.round.discoTiles || [];
     roundCountdownEndAt = state.round.countdownEndAt || null;
+    musicPulse = state.round.musicPulse || { bpm: null, anchorAt: null };
   }
   renderProfileLine();
   renderShopBox();
@@ -783,6 +800,20 @@ let roundItems = [];
 let discoTiles = [];
 let roundCountdownEndAt = null;
 let myStatusEffect = null;
+// Rythme simulé (BPM + ancrage commun) : la vraie musique vient d'une vidéo
+// YouTube intégrée, dont on ne peut pas analyser le son (restriction
+// cross-origin), donc ce "beat" est une approximation calée sur le serveur,
+// pas une vraie détection audio — cf. commentaire serveur sur MUSIC_PULSE_BPM_MIN.
+let musicPulse = { bpm: null, anchorAt: null };
+// Renvoie où on en est dans le battement courant (0 = pile sur le temps, se
+// rapproche de 1 juste avant le suivant), ou null si aucune musique ne tourne.
+function beatPhase() {
+  if (!musicPulse || !musicPulse.bpm || !musicPulse.anchorAt) return null;
+  const elapsed = serverNow() - musicPulse.anchorAt;
+  if (elapsed < 0) return null; // décompte de départ pas encore terminé
+  const beatMs = 60000 / musicPulse.bpm;
+  return (elapsed % beatMs) / beatMs;
+}
 
 const ITEM_EMOJI = {
   coin: '🪙', discoball: '🪩', sneaker: '👟', vip: '🎫', baton: '🥊',
@@ -797,7 +828,9 @@ const STATUS_BADGE_EMOJI = {
 socket.on('round-state', (r) => {
   roundActive = !!r.active;
   roundItems = r.items || [];
+  discoTiles = r.discoTiles || [];
   roundCountdownEndAt = r.countdownEndAt || null;
+  musicPulse = r.musicPulse || { bpm: null, anchorAt: null };
 });
 socket.on('round-items', (items) => { roundItems = items || []; });
 socket.on('disco-tiles', (tiles) => { discoTiles = tiles || []; });
@@ -816,6 +849,34 @@ socket.on('you-were-pushed', ({ x, y }) => {
   myX = x; myY = y;
   if (selfId && players[selfId]) { players[selfId].x = x; players[selfId].y = y; }
 });
+
+// "Drop" simulé de la musique : le serveur prévient tout le monde un peu à
+// l'avance (dropAt dans le futur) pour que le stroboscope plein écran se
+// déclenche exactement au même instant chez tout le monde.
+let strobeInterval = null;
+socket.on('music-drop', ({ dropAt, durationMs }) => {
+  const delay = Math.max(0, dropAt - serverNow());
+  setTimeout(() => triggerStrobe(durationMs || 1400), delay);
+});
+function triggerStrobe(durationMs) {
+  const overlay = document.getElementById('strobe-overlay');
+  if (!overlay) return;
+  if (strobeInterval) clearInterval(strobeInterval);
+  const start = performance.now();
+  overlay.style.display = 'block';
+  strobeInterval = setInterval(() => {
+    const elapsed = performance.now() - start;
+    if (elapsed >= durationMs) {
+      clearInterval(strobeInterval);
+      strobeInterval = null;
+      overlay.style.opacity = '0';
+      overlay.style.display = 'none';
+      return;
+    }
+    const on = Math.floor(elapsed / 70) % 2 === 0;
+    overlay.style.opacity = on ? '0.92' : '0';
+  }, 35);
+}
 
 function showItemToast(info) {
   const line = document.createElement('div');
@@ -858,22 +919,31 @@ function drawRoundItems(t) {
   ctx.textBaseline = 'alphabetic';
 }
 
-// Piste lumineuse façon dancefloor disco : des cases éteintes, dont certaines
-// s'allument de temps en temps et rapportent 1 à 5 pièces à qui marche dessus.
+// Piste lumineuse façon dancefloor disco : toute la piste est quadrillée de
+// cases éteintes, dont certaines s'allument de temps en temps dans une
+// couleur au hasard (pas toujours la même) et rapportent 1 à 5 pièces à qui
+// marche dessus. Mêmes dimensions de grille que côté serveur (cf.
+// DISCO_GRID_COLS/DISCO_GRID_ROWS dans server.js), juste pour calculer une
+// taille de case cohérente à l'écran.
+const DISCO_GRID_COLS = 14;
+const DISCO_GRID_ROWS = 5;
 function drawDiscoTiles(t) {
   if (!roundActive || !discoTiles.length) return;
-  const size = Math.max(24, Math.min(46, W / 18));
+  const tileW = (W * 0.84) / DISCO_GRID_COLS;
+  const tileH = (H * 0.30) / DISCO_GRID_ROWS;
+  const size = Math.max(12, Math.min(tileW, tileH) * 0.8);
   discoTiles.forEach(tile => {
     const x = tile.x * W, y = tile.y * H;
     ctx.save();
     if (tile.lit) {
+      const rgb = hexToRgb(tile.color || '#ffd35a');
       const pulse = 0.75 + Math.sin(t / 180 + tile.id) * 0.25;
-      ctx.shadowColor = 'rgba(255, 211, 90, 0.9)';
-      ctx.shadowBlur = 18 * pulse;
-      ctx.fillStyle = `rgba(255, ${180 + Math.round(40 * pulse)}, 90, ${0.55 + 0.25 * pulse})`;
+      ctx.shadowColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.9)`;
+      ctx.shadowBlur = 16 * pulse;
+      ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${0.55 + 0.25 * pulse})`;
       ctx.fillRect(x - size / 2, y - size / 2, size, size);
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = '#ffe08a';
+      ctx.strokeStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.95)`;
       ctx.lineWidth = 2;
       ctx.strokeRect(x - size / 2, y - size / 2, size, size);
     } else {
@@ -926,7 +996,8 @@ function currentFxStateFromControls() {
     },
     discoball: { on: document.getElementById('fx-discoball-on').checked, color: document.getElementById('fx-discoball-color').value },
     power: parseFloat(document.getElementById('fx-power').value),
-    speed: parseFloat(document.getElementById('fx-speed').value)
+    speed: parseFloat(document.getElementById('fx-speed').value),
+    autoMode: document.getElementById('fx-auto-on').checked
   };
 }
 function sendLightEffects() {
@@ -947,6 +1018,10 @@ fxControlIds.forEach(id => {
   const evt = (el.type === 'checkbox' || el.tagName === 'SELECT') ? 'change' : 'input';
   el.addEventListener(evt, sendLightEffects);
 });
+// Case "suivre la musique automatiquement" : quand le DJ l'active, le serveur
+// prend la main sur tous les réglages ci-dessus (cf. syncLightEffectsControls,
+// qui grise les contrôles manuels tant qu'elle est cochée).
+document.getElementById('fx-auto-on').addEventListener('change', sendLightEffects);
 
 // met les contrôles visuels en accord avec l'état reçu (utile pour les non-DJ
 // qui rejoignent en cours de route, et pour rester synchro après une reconnexion)
@@ -971,6 +1046,10 @@ function syncLightEffectsControls() {
   document.getElementById('fx-discoball-color').value = le.discoball.color;
   document.getElementById('fx-power').value = le.power;
   document.getElementById('fx-speed').value = le.speed;
+  document.getElementById('fx-auto-on').checked = !!le.autoMode;
+  const manualBox = document.getElementById('fx-manual-controls');
+  manualBox.style.opacity = le.autoMode ? '0.4' : '1';
+  manualBox.style.pointerEvents = le.autoMode ? 'none' : 'auto';
 }
 
 function renderDjModeUI() {
@@ -2075,8 +2154,27 @@ function drawBlobBody(c, move, accessory, color, isMe, t) {
   drawSelfRing(c, isMe, -8, 24);
 }
 
+// Fait vibrer légèrement toute la scène (piste + joueurs) en rythme, et
+// l'assombrit doucement entre les temps : la piste "respire" avec la
+// musique, plus sombre juste avant chaque battement, plus claire pile dessus.
+function drawMusicPulseOverlay(beat, env) {
+  if (beat === null) return;
+  const alpha = 0.24 * (1 - env);
+  if (alpha <= 0.01) return;
+  ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+  ctx.fillRect(0, 0, W, H);
+}
+
 function loop(t) {
   ctx.clearRect(0, 0, W, H);
+  const beat = beatPhase();
+  const env = beat !== null ? Math.pow(1 - beat, 3) : 0; // pic net au battement, retombe vite
+  ctx.save();
+  if (beat !== null) {
+    const jx = Math.sin(t / 17) * env * 3;
+    const jy = Math.cos(t / 23) * env * 2;
+    ctx.translate(jx, jy);
+  }
   drawBackground(t);
   drawLightEffectsBackground(t);
   drawDiscoTiles(t);
@@ -2085,6 +2183,8 @@ function loop(t) {
     if (id === myDjId) drawDjOnStage(p, id === selfId, t);
     else drawPlayer(p, id === selfId, t);
   });
+  ctx.restore();
+  drawMusicPulseOverlay(beat, env);
   updateAndDrawConfetti();
   drawFlashEffect(t);
   activeBubbles.forEach(positionBubble);
