@@ -726,12 +726,13 @@ document.getElementById('avatar-confirm-btn').addEventListener('click', () => {
   });
 });
 
+let previewMotionState = {};
 function avatarPreviewLoop(t) {
   avatarPreviewCtx.clearRect(0, 0, 180, 220);
   drawAvatarByType(
     avatarPreviewCtx, 90, 170, 2.1,
     avatarTypes[avatarTypeIndex], 'idle', 'none',
-    avatarColorChoices[avatarColorIndex], false, t
+    avatarColorChoices[avatarColorIndex], false, t, previewMotionState
   );
   requestAnimationFrame(avatarPreviewLoop);
 }
@@ -1978,6 +1979,124 @@ function drawFlatHighlight(c, x, y, w, h, alpha) {
   c.fill();
 }
 
+// Dégradé doux (clair en haut, plus sombre en bas) pour donner du volume à un
+// torse/rectangle au lieu d'un simple aplat de couleur — look plus "rendu".
+function linearBodyGradient(c, x, y, w, h, color) {
+  const g = c.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, shadeColor(color, 20));
+  g.addColorStop(1, shadeColor(color, -14));
+  return g;
+}
+
+// Dégradé radial (clair en haut-gauche, plus sombre sur les bords) pour les
+// formes rondes (têtes, corps de fantôme/blob...), même intention en plus doux.
+function radialBodyGradient(c, cx, cy, r, color) {
+  const g = c.createRadialGradient(cx - r * 0.3, cy - r * 0.35, r * 0.15, cx, cy, r * 1.15);
+  g.addColorStop(0, shadeColor(color, 26));
+  g.addColorStop(1, shadeColor(color, -16));
+  return g;
+}
+
+// --- lissage des poses : au lieu de sauter instantanément à la valeur cible
+// dès qu'un joueur change de mouvement (danse, saut...), chaque valeur glisse
+// doucement vers sa cible d'une frame à l'autre, pour une animation fluide
+// plutôt que des poses qui "claquent" d'un état à l'autre. `state` est un
+// objet persistant propre à chaque joueur (ré-utilisé d'une frame sur l'autre).
+function smoothMotion(state, target, t) {
+  if (state.lastT === undefined) {
+    Object.assign(state, target);
+    state.lastT = t;
+    return state;
+  }
+  const dt = Math.max(0, Math.min(64, t - state.lastT));
+  state.lastT = t;
+  const alpha = 1 - Math.exp(-dt / 110);
+  for (const key in target) {
+    if (state[key] === undefined) state[key] = target[key];
+    else state[key] += (target[key] - state[key]) * alpha;
+  }
+  return state;
+}
+
+// Rendu des accessoires premium achetés en boutique (slot "accessory", en
+// plus de casquette/chapeau/bouée/costume) : lunettes, auréole, ailes, masque
+// disco. Partagé par tous les types d'avatar + le DJ pour qu'un objet acheté
+// s'affiche bien une fois équipé, quel que soit le personnage.
+function drawPremiumAccessory(c, accessory, headY, headR) {
+  if (accessory === 'acc_shades') {
+    const y = headY - headR * 0.08;
+    const w = headR * 0.62, h = headR * 0.4, gap = headR * 0.18;
+    c.fillStyle = '#1c1a24';
+    roundRect(c, -w - gap / 2, y - h / 2, w, h, h * 0.35);
+    c.fill();
+    strokeOutline(c, '#1c1a24', 1.6);
+    roundRect(c, gap / 2, y - h / 2, w, h, h * 0.35);
+    c.fill();
+    strokeOutline(c, '#1c1a24', 1.6);
+    c.strokeStyle = '#1c1a24';
+    c.lineWidth = 2.4;
+    c.beginPath();
+    c.moveTo(-gap / 2, y); c.lineTo(gap / 2, y);
+    c.stroke();
+    c.fillStyle = 'rgba(255,255,255,0.35)';
+    c.beginPath();
+    c.ellipse(-w * 0.55, y - h * 0.18, w * 0.22, h * 0.16, -0.3, 0, Math.PI * 2);
+    c.ellipse(gap / 2 + w * 0.45, y - h * 0.18, w * 0.22, h * 0.16, -0.3, 0, Math.PI * 2);
+    c.fill();
+  } else if (accessory === 'acc_halo') {
+    const y = headY - headR * 1.55;
+    c.save();
+    c.globalAlpha = 0.55;
+    c.fillStyle = '#ffe9a8';
+    c.beginPath();
+    c.ellipse(0, y, headR * 0.85, headR * 0.85, 0, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+    c.strokeStyle = '#ffd35a';
+    c.lineWidth = headR * 0.16;
+    c.beginPath();
+    c.ellipse(0, y, headR * 0.62, headR * 0.2, 0, 0, Math.PI * 2);
+    c.stroke();
+    c.strokeStyle = shadeColor('#ffd35a', -30);
+    c.lineWidth = headR * 0.16;
+    c.beginPath();
+    c.ellipse(0, y, headR * 0.62, headR * 0.2, 0, Math.PI * 0.05, Math.PI * 0.95);
+    c.stroke();
+  } else if (accessory === 'acc_wings') {
+    const y = headY + headR * 1.3;
+    [-1, 1].forEach(side => {
+      c.save();
+      c.translate(side * headR * 0.3, y);
+      c.scale(side, 1);
+      c.fillStyle = '#f2eefb';
+      c.beginPath();
+      c.ellipse(headR * 1.15, -headR * 0.15, headR * 1.35, headR * 0.6, -0.55, 0, Math.PI * 2);
+      c.fill();
+      strokeOutline(c, '#f2eefb', 2);
+      c.fillStyle = 'rgba(190,180,225,0.55)';
+      c.beginPath();
+      c.ellipse(headR * 0.95, -headR * 0.1, headR * 0.75, headR * 0.3, -0.55, 0, Math.PI * 2);
+      c.fill();
+      c.restore();
+    });
+  } else if (accessory === 'acc_disco') {
+    const y = headY - headR * 0.1;
+    const r = headR * 0.72;
+    c.fillStyle = '#151022';
+    c.beginPath();
+    c.ellipse(0, y, r, r * 0.62, 0, 0, Math.PI * 2);
+    c.fill();
+    strokeOutline(c, '#151022', 1.8);
+    for (let i = -2; i <= 2; i++) {
+      const flicker = (Math.sin(Date.now() / 160 + i * 1.3) + 1) / 2;
+      c.fillStyle = `hsl(${(i * 55 + 300) % 360}, 85%, ${55 + flicker * 20}%)`;
+      c.beginPath();
+      c.arc(i * r * 0.32, y - r * 0.08, r * 0.13, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+}
+
 // avatar vu de dos, style détaillé (grosse tête, corps "chunky", accessoires)
 function drawPlayer(p, isMe, t) {
   const cx = p.x * W, cy = p.y * H;
@@ -1987,8 +2106,9 @@ function drawPlayer(p, isMe, t) {
   const move = (p.statusEffect && p.statusEffect.type === 'frozen') ? 'dance2' : (p.pose || 'idle');
   const accessory = p.accessory || 'none';
   const color = p.avatarColor || p.color || '#8d84a3';
+  if (!p._motion) p._motion = {};
 
-  drawAvatarByType(ctx, cx, cy, scale, p.avatarType || 'human', move, accessory, color, isMe, t);
+  drawAvatarByType(ctx, cx, cy, scale, p.avatarType || 'human', move, accessory, color, isMe, t, p._motion);
 
   // petit badge au-dessus de la tête pour l'effet bonus/malus en cours (le
   // même que l'icône de l'objet ramassé), visible par tout le monde.
@@ -2010,17 +2130,18 @@ function drawPlayer(p, isMe, t) {
 
 // Dispatche vers le bon dessin selon le type d'avatar choisi à l'entrée.
 // Utilisé à la fois par le rendu du jeu et par l'aperçu de l'écran de sélection.
-function drawAvatarByType(c, cx, cy, scale, avatarType, move, accessory, color, isMe, t) {
+function drawAvatarByType(c, cx, cy, scale, avatarType, move, accessory, color, isMe, t, motionState) {
   c.save();
   c.translate(cx, cy);
   c.scale(scale, scale);
+  const ms = motionState || {};
 
-  if (avatarType === 'robot') drawRobotBody(c, move, accessory, color, isMe, t);
-  else if (avatarType === 'alien') drawAlienBody(c, move, accessory, color, isMe, t);
-  else if (avatarType === 'ghost') drawGhostBody(c, move, accessory, color, isMe, t);
-  else if (avatarType === 'dragon') drawDragonBody(c, move, accessory, color, isMe, t);
-  else if (avatarType === 'blob') drawBlobBody(c, move, accessory, color, isMe, t);
-  else drawHumanBody(c, move, accessory, color, isMe, t);
+  if (avatarType === 'robot') drawRobotBody(c, move, accessory, color, isMe, t, ms);
+  else if (avatarType === 'alien') drawAlienBody(c, move, accessory, color, isMe, t, ms);
+  else if (avatarType === 'ghost') drawGhostBody(c, move, accessory, color, isMe, t, ms);
+  else if (avatarType === 'dragon') drawDragonBody(c, move, accessory, color, isMe, t, ms);
+  else if (avatarType === 'blob') drawBlobBody(c, move, accessory, color, isMe, t, ms);
+  else drawHumanBody(c, move, accessory, color, isMe, t, ms);
 
   c.restore();
 }
@@ -2056,8 +2177,8 @@ function drawSelfRing(c, isMe, cy, r) {
 }
 
 // --- avatar "Festivalier" (humain, vu de dos) ---
-function drawHumanBody(c, move, accessory, color, isMe, t) {
-  const { armAngle, armLift, bob, sway, legSpread } = motionFor(move, t);
+function drawHumanBody(c, move, accessory, color, isMe, t, motionState) {
+  const { armAngle, armLift, bob, sway, legSpread } = smoothMotion(motionState || {}, motionFor(move, t), t);
   c.translate(sway, -bob);
   drawShadow(c, sway, bob);
 
@@ -2068,6 +2189,10 @@ function drawHumanBody(c, move, accessory, color, isMe, t) {
   traceRoundRect(c, 3, 16, 10, 20, 4);
   c.fill();
   strokeOutline(c, pantsColor, 2.2);
+  // ceinture, pour distinguer le pantalon du bas du blouson
+  c.fillStyle = shadeColor(pantsColor, -18);
+  c.fillRect(-13, 15, 10, 3.5);
+  c.fillRect(3, 15, 10, 3.5);
   c.fillStyle = '#1c1626';
   c.beginPath();
   traceRoundRect(c, -14, 33, 12, 7, 3);
@@ -2084,10 +2209,23 @@ function drawHumanBody(c, move, accessory, color, isMe, t) {
   drawLimbTube(c, -16, shoulderY, lx, ly, 11, color);
   drawLimbTube(c, 16, shoulderY, rx, ry, 11, color);
 
-  c.fillStyle = color;
+  // blouson : dégradé pour le volume + col/fermeture d'une teinte contrastée
+  // pour un vêtement bien distinct plutôt qu'un aplat uni
+  c.fillStyle = linearBodyGradient(c, -17, -18, 34, 38, color);
   roundRect(c, -17, -18, 34, 38, 12);
   c.fill();
   strokeOutline(c, color, 2.6);
+  const innerTone = shadeColor(color, -34);
+  c.fillStyle = innerTone;
+  c.beginPath();
+  c.moveTo(-6, -18); c.lineTo(6, -18); c.lineTo(3, 4); c.lineTo(-3, 4); c.closePath();
+  c.fill();
+  strokeOutline(c, innerTone, 1.6);
+  c.strokeStyle = shadeColor(color, -46);
+  c.lineWidth = 1.4;
+  c.beginPath();
+  c.moveTo(0, -17); c.lineTo(0, 3);
+  c.stroke();
   drawFlatHighlight(c, -6, -8, 8, 13, 0.14);
 
   if (accessory === 'costume') {
@@ -2161,13 +2299,14 @@ function drawHumanBody(c, move, accessory, color, isMe, t) {
     c.fill();
     strokeOutline(c, '#caa25a', 2);
   }
+  drawPremiumAccessory(c, accessory, -32, 17);
 
   drawSelfRing(c, isMe, -32, 23);
 }
 
 // --- avatar "Robot" : corps carré, une antenne, un œil rond ---
-function drawRobotBody(c, move, accessory, color, isMe, t) {
-  const { armLift, bob, sway, legSpread } = motionFor(move, t);
+function drawRobotBody(c, move, accessory, color, isMe, t, motionState) {
+  const { armLift, bob, sway, legSpread } = smoothMotion(motionState || {}, motionFor(move, t), t);
   c.translate(sway, -bob);
   drawShadow(c, sway, bob);
 
@@ -2179,11 +2318,19 @@ function drawRobotBody(c, move, accessory, color, isMe, t) {
   c.fill();
   strokeOutline(c, '#3a3a44', 2.2);
 
-  // corps
-  c.fillStyle = color;
+  // corps : plastron avec plaques distinctes (vêtement du robot), pas un
+  // simple aplat — dégradé pour le volume + lignes de jointure
+  c.fillStyle = linearBodyGradient(c, -19, -16, 38, 38, color);
   roundRect(c, -19, -16, 38, 38, 8);
   c.fill();
   strokeOutline(c, color, 2.6);
+  c.strokeStyle = shadeColor(color, -38);
+  c.lineWidth = 1.6;
+  roundRect(c, -12, -10, 24, 26, 5);
+  c.stroke();
+  c.beginPath();
+  c.moveTo(-19, -1); c.lineTo(19, -1);
+  c.stroke();
   c.strokeStyle = 'rgba(255,255,255,0.25)';
   c.lineWidth = 2;
   roundRect(c, -16, -13, 14, 32, 5);
@@ -2233,13 +2380,14 @@ function drawRobotBody(c, move, accessory, color, isMe, t) {
     c.fill();
     strokeOutline(c, capColor, 1.8);
   }
+  drawPremiumAccessory(c, accessory, -33, 16);
 
   drawSelfRing(c, isMe, -33, 26);
 }
 
 // --- avatar "Alien" : grosse tête, grands yeux ---
-function drawAlienBody(c, move, accessory, color, isMe, t) {
-  const { armLift, bob, sway, legSpread } = motionFor(move, t);
+function drawAlienBody(c, move, accessory, color, isMe, t, motionState) {
+  const { armLift, bob, sway, legSpread } = smoothMotion(motionState || {}, motionFor(move, t), t);
   c.translate(sway, -bob);
   drawShadow(c, sway, bob);
 
@@ -2254,14 +2402,18 @@ function drawAlienBody(c, move, accessory, color, isMe, t) {
   drawLimbTube(c, -11, -2, -20, armY, 7, color);
   drawLimbTube(c, 11, -2, 20, armY, 7, color);
 
-  c.fillStyle = color;
+  c.fillStyle = linearBodyGradient(c, -12, -10, 24, 24, color);
   roundRect(c, -12, -10, 24, 24, 10);
   c.fill();
   strokeOutline(c, color, 2.4);
+  // col de combinaison, pour un vêtement distinct plutôt qu'une peau nue
+  c.fillStyle = shadeColor(color, -32);
+  roundRect(c, -12, -10, 24, 6, 6);
+  c.fill();
   drawFlatHighlight(c, -4, -4, 5, 8, 0.14);
 
   // grosse tête ovale
-  c.fillStyle = color;
+  c.fillStyle = radialBodyGradient(c, -5, -38, 22, color);
   c.beginPath();
   c.ellipse(0, -32, 20, 24, 0, 0, Math.PI * 2);
   c.fill();
@@ -2293,17 +2445,21 @@ function drawAlienBody(c, move, accessory, color, isMe, t) {
     c.fill();
     strokeOutline(c, '#caa25a', 2);
   }
+  drawPremiumAccessory(c, accessory, -32, 20);
 
   drawSelfRing(c, isMe, -32, 27);
 }
 
 // --- avatar "Fantôme" : flotte, pas de jambes ---
-function drawGhostBody(c, move, accessory, color, isMe, t) {
-  const bobBase = Math.sin(t / 500) * 5;
-  const extra = move === 'jump' ? Math.abs(Math.sin(t / 200)) * 14
-    : move === 'hands_up' ? Math.abs(Math.sin(t / 260)) * 6
-    : (move === 'dance1' || move === 'dance2') ? Math.abs(Math.sin(t / 280)) * 8 : 0;
-  const sway = (move === 'dance1' || move === 'dance2') ? Math.sin(t / 320) * 12 : Math.sin(t / 700) * 3;
+function drawGhostBody(c, move, accessory, color, isMe, t, motionState) {
+  const raw = {
+    bobBase: Math.sin(t / 500) * 5,
+    extra: move === 'jump' ? Math.abs(Math.sin(t / 200)) * 14
+      : move === 'hands_up' ? Math.abs(Math.sin(t / 260)) * 6
+      : (move === 'dance1' || move === 'dance2') ? Math.abs(Math.sin(t / 280)) * 8 : 0,
+    sway: (move === 'dance1' || move === 'dance2') ? Math.sin(t / 320) * 12 : Math.sin(t / 700) * 3
+  };
+  const { bobBase, extra, sway } = smoothMotion(motionState || {}, raw, t);
   c.translate(sway, -(bobBase + extra));
 
   c.save();
@@ -2315,7 +2471,7 @@ function drawGhostBody(c, move, accessory, color, isMe, t) {
   c.restore();
 
   c.globalAlpha = 0.9;
-  c.fillStyle = color;
+  c.fillStyle = radialBodyGradient(c, -5, -18, 22, color);
   c.beginPath();
   c.arc(0, -12, 20, Math.PI, 0);
   c.lineTo(20, 24);
@@ -2334,6 +2490,19 @@ function drawGhostBody(c, move, accessory, color, isMe, t) {
   c.ellipse(7, -14, 3.2, 4.5, 0, 0, Math.PI * 2);
   c.fill();
 
+  // petit nœud papillon, comme un vêtement distinct sur ce corps qui flotte
+  const bowTone = shadeColor(color, -40);
+  c.fillStyle = bowTone;
+  c.beginPath();
+  c.moveTo(-1.5, -4); c.lineTo(-8, -8); c.lineTo(-8, 0); c.closePath();
+  c.moveTo(1.5, -4); c.lineTo(8, -8); c.lineTo(8, 0); c.closePath();
+  c.fill();
+  strokeOutline(c, bowTone, 1.4);
+  c.fillStyle = shadeColor(bowTone, -20);
+  c.beginPath();
+  c.arc(0, -4, 2.4, 0, Math.PI * 2);
+  c.fill();
+
   if (accessory === 'cap') {
     c.fillStyle = '#2f9e6b';
     c.beginPath();
@@ -2347,13 +2516,14 @@ function drawGhostBody(c, move, accessory, color, isMe, t) {
     c.fill();
     strokeOutline(c, '#caa25a', 1.8);
   }
+  drawPremiumAccessory(c, accessory, -22, 15);
 
   drawSelfRing(c, isMe, -14, 24);
 }
 
 // --- avatar "Dragonnet" : cornes, ailes, queue ---
-function drawDragonBody(c, move, accessory, color, isMe, t) {
-  const { armLift, bob, sway, legSpread } = motionFor(move, t);
+function drawDragonBody(c, move, accessory, color, isMe, t, motionState) {
+  const { armLift, bob, sway, legSpread } = smoothMotion(motionState || {}, motionFor(move, t), t);
   c.translate(sway, -bob);
   drawShadow(c, sway, bob);
 
@@ -2379,10 +2549,19 @@ function drawDragonBody(c, move, accessory, color, isMe, t) {
   strokeOutline(c, color, 2.2);
 
   // corps
-  c.fillStyle = color;
+  c.fillStyle = linearBodyGradient(c, -15, -14, 30, 32, color);
   roundRect(c, -15, -14, 30, 32, 12);
   c.fill();
   strokeOutline(c, color, 2.4);
+  // plaques du ventre, façon écailles/armure — un "vêtement" propre au dragon
+  const bellyTone = shadeColor(color, 12);
+  c.fillStyle = bellyTone;
+  [-6, 2, 10].forEach(y => {
+    c.beginPath();
+    c.ellipse(0, y, 6, 3.4, 0, 0, Math.PI * 2);
+    c.fill();
+    strokeOutline(c, bellyTone, 1.2);
+  });
   drawFlatHighlight(c, -5, -6, 6, 10, 0.14);
 
   // ailes (s'écartent avec les mains en l'air / saut)
@@ -2443,17 +2622,19 @@ function drawDragonBody(c, move, accessory, color, isMe, t) {
     c.fill();
     strokeOutline(c, '#caa25a', 1.8);
   }
+  drawPremiumAccessory(c, accessory, -28, 14);
 
   drawSelfRing(c, isMe, -28, 20);
 }
 
 // --- avatar "Blob" : rond, tentacules, un œil ---
-function drawBlobBody(c, move, accessory, color, isMe, t) {
-  const bobBase = Math.abs(Math.sin(t / 500)) * 4;
-  const extra = move === 'jump' ? Math.abs(Math.sin(t / 200)) * 16
+function drawBlobBody(c, move, accessory, color, isMe, t, motionState) {
+  const rawBobBase = Math.abs(Math.sin(t / 500)) * 4;
+  const rawExtra = move === 'jump' ? Math.abs(Math.sin(t / 200)) * 16
     : move === 'hands_up' ? Math.abs(Math.sin(t / 260)) * 6
     : (move === 'dance1' || move === 'dance2') ? Math.abs(Math.sin(t / 280)) * 8 : 0;
-  const sway = (move === 'dance1' || move === 'dance2') ? Math.sin(t / 300) * 12 : Math.sin(t / 750) * 2;
+  const rawSway = (move === 'dance1' || move === 'dance2') ? Math.sin(t / 300) * 12 : Math.sin(t / 750) * 2;
+  const { bobBase, extra, sway } = smoothMotion(motionState || {}, { bobBase: rawBobBase, extra: rawExtra, sway: rawSway }, t);
   const squish = 1 - Math.min(0.15, (bobBase + extra) / 60);
   c.translate(sway, -(bobBase + extra));
 
@@ -2485,11 +2666,18 @@ function drawBlobBody(c, move, accessory, color, isMe, t) {
   // corps rond (légèrement écrasé au sol quand il saute)
   c.save();
   c.scale(1, squish);
-  c.fillStyle = color;
+  c.fillStyle = radialBodyGradient(c, -5, -12 / squish, 22, color);
   c.beginPath();
   c.arc(0, -4 / squish, 20, 0, Math.PI * 2);
   c.fill();
   strokeOutline(c, color, 2.6 / squish);
+  // bandana, comme un vêtement bien distinct posé sur le corps rond
+  const bandanaTone = shadeColor(color, -36);
+  c.fillStyle = bandanaTone;
+  c.beginPath();
+  c.ellipse(0, -14 / squish, 19.5, 5.5, 0, Math.PI * 0.98, Math.PI * 2.02);
+  c.fill();
+  strokeOutline(c, bandanaTone, 1.6);
   drawFlatHighlight(c, -7, -12 / squish, 5, 7 / squish, 0.16);
   c.restore();
 
@@ -2517,6 +2705,7 @@ function drawBlobBody(c, move, accessory, color, isMe, t) {
     c.fill();
     strokeOutline(c, '#caa25a', 1.8);
   }
+  drawPremiumAccessory(c, accessory, -8, 18);
 
   drawSelfRing(c, isMe, -8, 24);
 }
@@ -2929,16 +3118,19 @@ function drawDjOnStage(p, isMe, t) {
   ctx.translate(cx, cy);
   ctx.scale(scale, scale);
 
-  let armLift = 0, bob = 0, sway = 0;
-  if (pose === 'dj_behind') { bob = Math.sin(t / 500) * 2; sway = Math.sin(t / 700) * 2; }
-  else if (pose === 'dj_behind_hands') { armLift = 1; bob = Math.abs(Math.sin(t / 220)) * 10; }
-  else if (pose === 'dj_on_deck') { armLift = 0.6 + Math.sin(t / 180) * 0.4; bob = Math.abs(Math.sin(t / 180)) * 16; }
-  else if (pose === 'dj_front_dance') { sway = Math.sin(t / 300) * 14; armLift = 0.3 + Math.sin(t / 300) * 0.3; bob = Math.abs(Math.sin(t / 300)) * 4; }
-  else if (pose === 'dj_front_cannon') { armLift = 0.85; bob = Math.sin(t / 260) * 2; }
+  let rawArmLift = 0, rawBob = 0, rawSway = 0;
+  if (pose === 'dj_behind') { rawBob = Math.sin(t / 500) * 2; rawSway = Math.sin(t / 700) * 2; }
+  else if (pose === 'dj_behind_hands') { rawArmLift = 1; rawBob = Math.abs(Math.sin(t / 220)) * 10; }
+  else if (pose === 'dj_on_deck') { rawArmLift = 0.6 + Math.sin(t / 180) * 0.4; rawBob = Math.abs(Math.sin(t / 180)) * 16; }
+  else if (pose === 'dj_front_dance') { rawSway = Math.sin(t / 300) * 14; rawArmLift = 0.3 + Math.sin(t / 300) * 0.3; rawBob = Math.abs(Math.sin(t / 300)) * 4; }
+  else if (pose === 'dj_front_cannon') { rawArmLift = 0.85; rawBob = Math.sin(t / 260) * 2; }
 
-  let djY = -20; // derrière les platines par défaut
-  if (pose === 'dj_on_deck') djY = -38;
-  else if (pose === 'dj_front_dance' || pose === 'dj_front_cannon') djY = 34;
+  let rawDjY = -20; // derrière les platines par défaut
+  if (pose === 'dj_on_deck') rawDjY = -38;
+  else if (pose === 'dj_front_dance' || pose === 'dj_front_cannon') rawDjY = 34;
+
+  if (!p._motion) p._motion = {};
+  const { armLift, bob, sway, djY } = smoothMotion(p._motion, { armLift: rawArmLift, bob: rawBob, sway: rawSway, djY: rawDjY }, t);
 
   const drawDeckFirst = pose !== 'dj_front_dance' && pose !== 'dj_front_cannon';
 
@@ -2979,7 +3171,7 @@ function drawDjOnStage(p, isMe, t) {
     drawLimbTube(ctx, 14, shoulderY, rx, ry, 9, color);
 
     // corps
-    ctx.fillStyle = color;
+    ctx.fillStyle = linearBodyGradient(ctx, -15, -12, 30, 32, color);
     roundRect(ctx, -15, -12, 30, 32, 10);
     ctx.fill();
     strokeOutline(ctx, color, 2.4);
@@ -3015,12 +3207,15 @@ function drawDjOnStage(p, isMe, t) {
       ctx.beginPath();
       ctx.arc(0, -23, 14.5, Math.PI * 0.9, Math.PI * 2.1);
       ctx.fill();
+      strokeOutline(ctx, '#2f9e6b', 1.8);
     } else if (accessory === 'hat') {
       ctx.fillStyle = '#caa25a';
       ctx.beginPath();
       ctx.ellipse(0, -30, 18, 4, 0, 0, Math.PI * 2);
       ctx.fill();
+      strokeOutline(ctx, '#caa25a', 1.8);
     }
+    drawPremiumAccessory(ctx, accessory, -22, 17);
 
     if (isMe) {
       ctx.strokeStyle = '#fff';
