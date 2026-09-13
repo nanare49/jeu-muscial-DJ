@@ -1940,6 +1940,44 @@ function traceRoundRect(c, x, y, w, h, r) {
   c.closePath();
 }
 
+// --- style "illustration vectorielle plate" : contour net + membres en volume ---
+// Applique un contour sombre net sur la forme qui vient d'être remplie (le
+// chemin est encore actif juste après un c.fill()), façon flat design avec
+// un trait bien visible autour de chaque forme.
+function strokeOutline(c, baseColor, width) {
+  c.strokeStyle = shadeColor(baseColor, -42);
+  c.lineWidth = width || 2.5;
+  c.lineJoin = 'round';
+  c.stroke();
+}
+
+// Dessine un membre (bras, jambe, tentacule, queue...) en "tube" avec contour,
+// au lieu d'un simple bâton : un trait large sombre dessous, un trait de la
+// couleur du personnage par-dessus, un peu plus fin — même geste que les bras
+// dessinés à la main dans une illustration vectorielle.
+function drawLimbTube(c, x1, y1, x2, y2, width, color) {
+  c.lineCap = 'round';
+  c.beginPath();
+  c.moveTo(x1, y1); c.lineTo(x2, y2);
+  c.strokeStyle = shadeColor(color, -42);
+  c.lineWidth = width + 4;
+  c.stroke();
+  c.beginPath();
+  c.moveTo(x1, y1); c.lineTo(x2, y2);
+  c.strokeStyle = color;
+  c.lineWidth = width;
+  c.stroke();
+}
+
+// Petite touche de lumière plate, façon illustration vectorielle, posée sur
+// une forme déjà remplie (torse, tête...) sans dégradé complexe.
+function drawFlatHighlight(c, x, y, w, h, alpha) {
+  c.fillStyle = `rgba(255,255,255,${alpha != null ? alpha : 0.16})`;
+  c.beginPath();
+  c.ellipse(x, y, w, h, 0, 0, Math.PI * 2);
+  c.fill();
+}
+
 // avatar vu de dos, style détaillé (grosse tête, corps "chunky", accessoires)
 function drawPlayer(p, isMe, t) {
   const cx = p.x * W, cy = p.y * H;
@@ -2029,15 +2067,28 @@ function drawHumanBody(c, move, accessory, color, isMe, t) {
   traceRoundRect(c, -13, 16, 10, 20, 4);
   traceRoundRect(c, 3, 16, 10, 20, 4);
   c.fill();
+  strokeOutline(c, pantsColor, 2.2);
   c.fillStyle = '#1c1626';
   c.beginPath();
   traceRoundRect(c, -14, 33, 12, 7, 3);
   traceRoundRect(c, 2, 33, 12, 7, 3);
   c.fill();
+  strokeOutline(c, '#1c1626', 2.2);
+
+  // bras (membres en volume, dessinés avant le torse pour passer dessous à l'épaule)
+  const shoulderY = -10, armLen = 24;
+  const angle = armAngle + (Math.PI / 2 + 0.2 - armAngle) * armLift;
+  const lx = -16 - Math.cos(angle) * armLen, ly = shoulderY - Math.sin(angle) * armLen;
+  let rx = 16 + Math.cos(angle) * armLen, ry = shoulderY - Math.sin(angle) * armLen;
+  if (move === 'clap') { rx = lx + 6; ry = ly; }
+  drawLimbTube(c, -16, shoulderY, lx, ly, 11, color);
+  drawLimbTube(c, 16, shoulderY, rx, ry, 11, color);
 
   c.fillStyle = color;
   roundRect(c, -17, -18, 34, 38, 12);
   c.fill();
+  strokeOutline(c, color, 2.6);
+  drawFlatHighlight(c, -6, -8, 8, 13, 0.14);
 
   if (accessory === 'costume') {
     c.strokeStyle = '#ff5fa3';
@@ -2059,40 +2110,37 @@ function drawHumanBody(c, move, accessory, color, isMe, t) {
     c.stroke();
   }
 
-  const shoulderY = -10, armLen = 24;
-  const angle = armAngle + (Math.PI / 2 + 0.2 - armAngle) * armLift;
-  const lx = -16 - Math.cos(angle) * armLen, ly = shoulderY - Math.sin(angle) * armLen;
-  let rx = 16 + Math.cos(angle) * armLen, ry = shoulderY - Math.sin(angle) * armLen;
-  if (move === 'clap') { rx = lx + 6; ry = ly; }
-
-  c.strokeStyle = color;
-  c.lineWidth = 9;
-  c.lineCap = 'round';
-  c.beginPath();
-  c.moveTo(-16, shoulderY); c.lineTo(lx, ly);
-  c.moveTo(16, shoulderY); c.lineTo(rx, ry);
-  c.stroke();
-
   const skinTone = '#f0cca3';
   c.fillStyle = skinTone;
   c.beginPath();
   c.arc(lx, ly, 6.5, 0, Math.PI * 2);
   c.arc(rx, ry, 6.5, 0, Math.PI * 2);
   c.fill();
+  strokeOutline(c, skinTone, 2);
 
   c.fillStyle = skinTone;
   c.beginPath();
   c.arc(0, -32, 17, 0, Math.PI * 2);
   c.fill();
+  strokeOutline(c, skinTone, 2.6);
   c.fillStyle = '#241c30';
   c.beginPath();
   c.arc(0, -34, 17.6, Math.PI * 0.02, Math.PI * 0.98);
   c.closePath();
   c.fill();
+  strokeOutline(c, '#241c30', 2.2);
   c.fillStyle = skinTone;
   c.beginPath();
   c.arc(-16, -28, 3.2, 0, Math.PI * 2);
   c.arc(16, -28, 3.2, 0, Math.PI * 2);
+  c.fill();
+  strokeOutline(c, skinTone, 1.6);
+
+  // visage minimal, façon illustration plate
+  c.fillStyle = '#2a2136';
+  c.beginPath();
+  c.arc(-6, -32, 1.8, 0, Math.PI * 2);
+  c.arc(6, -32, 1.8, 0, Math.PI * 2);
   c.fill();
 
   if (accessory === 'cap') {
@@ -2100,15 +2148,18 @@ function drawHumanBody(c, move, accessory, color, isMe, t) {
     c.beginPath();
     c.arc(0, -35, 18.2, Math.PI * 0.85, Math.PI * 2.15);
     c.fill();
+    strokeOutline(c, '#2f9e6b', 2);
     c.fillRect(-6, -19, 12, 5);
   } else if (accessory === 'hat') {
     c.fillStyle = '#caa25a';
     c.beginPath();
     c.ellipse(0, -40, 25, 6, 0, 0, Math.PI * 2);
     c.fill();
+    strokeOutline(c, '#caa25a', 2);
     c.beginPath();
     c.arc(0, -47, 12, Math.PI, Math.PI * 2);
     c.fill();
+    strokeOutline(c, '#caa25a', 2);
   }
 
   drawSelfRing(c, isMe, -32, 23);
@@ -2126,15 +2177,18 @@ function drawRobotBody(c, move, accessory, color, isMe, t) {
   traceRoundRect(c, -13 - (legSpread - 6), 18, 10, 18, 3);
   traceRoundRect(c, 3 + (legSpread - 6), 18, 10, 18, 3);
   c.fill();
+  strokeOutline(c, '#3a3a44', 2.2);
 
   // corps
   c.fillStyle = color;
   roundRect(c, -19, -16, 38, 38, 8);
   c.fill();
+  strokeOutline(c, color, 2.6);
   c.strokeStyle = 'rgba(255,255,255,0.25)';
   c.lineWidth = 2;
-  roundRect(c, -19, -16, 38, 38, 8);
+  roundRect(c, -16, -13, 14, 32, 5);
   c.stroke();
+  drawFlatHighlight(c, -7, -6, 8, 13, 0.14);
 
   // bras (blocs qui se lèvent)
   const armY = -6 - armLift * 22;
@@ -2143,11 +2197,13 @@ function drawRobotBody(c, move, accessory, color, isMe, t) {
   traceRoundRect(c, -30, armY, 10, 20, 4);
   traceRoundRect(c, 20, armY, 10, 20, 4);
   c.fill();
+  strokeOutline(c, '#3a3a44', 2.2);
 
   // tête
   c.fillStyle = '#3a3a44';
   roundRect(c, -16, -46, 32, 26, 8);
   c.fill();
+  strokeOutline(c, '#3a3a44', 2.4);
   // antenne
   c.strokeStyle = '#3a3a44';
   c.lineWidth = 3;
@@ -2158,20 +2214,24 @@ function drawRobotBody(c, move, accessory, color, isMe, t) {
   c.beginPath();
   c.arc(0, -58, 4, 0, Math.PI * 2);
   c.fill();
+  strokeOutline(c, color, 1.8);
   // œil
   c.fillStyle = color;
   c.beginPath();
   c.arc(0, -33, 8, 0, Math.PI * 2);
   c.fill();
+  strokeOutline(c, color, 2);
   c.fillStyle = '#0d0a14';
   c.beginPath();
   c.arc(0, -33, 4, 0, Math.PI * 2);
   c.fill();
 
   if (accessory === 'cap' || accessory === 'hat') {
-    c.fillStyle = accessory === 'cap' ? '#2f9e6b' : '#caa25a';
+    const capColor = accessory === 'cap' ? '#2f9e6b' : '#caa25a';
+    c.fillStyle = capColor;
     roundRect(c, -18, -52, 36, 6, 3);
     c.fill();
+    strokeOutline(c, capColor, 1.8);
   }
 
   drawSelfRing(c, isMe, -33, 26);
@@ -2188,25 +2248,25 @@ function drawAlienBody(c, move, accessory, color, isMe, t) {
   traceRoundRect(c, -10, 8, 8, 16, 3);
   traceRoundRect(c, 2, 8, 8, 16, 3);
   c.fill();
+  strokeOutline(c, color, 2.2);
+
+  const armY = -2 - armLift * 18;
+  drawLimbTube(c, -11, -2, -20, armY, 7, color);
+  drawLimbTube(c, 11, -2, 20, armY, 7, color);
 
   c.fillStyle = color;
   roundRect(c, -12, -10, 24, 24, 10);
   c.fill();
-
-  const armY = -2 - armLift * 18;
-  c.strokeStyle = color;
-  c.lineWidth = 6;
-  c.lineCap = 'round';
-  c.beginPath();
-  c.moveTo(-11, -2); c.lineTo(-20, armY);
-  c.moveTo(11, -2); c.lineTo(20, armY);
-  c.stroke();
+  strokeOutline(c, color, 2.4);
+  drawFlatHighlight(c, -4, -4, 5, 8, 0.14);
 
   // grosse tête ovale
   c.fillStyle = color;
   c.beginPath();
   c.ellipse(0, -32, 20, 24, 0, 0, Math.PI * 2);
   c.fill();
+  strokeOutline(c, color, 2.6);
+  drawFlatHighlight(c, -7, -40, 5, 7, 0.16);
 
   // grands yeux noirs en amande
   c.fillStyle = '#0d0a14';
@@ -2225,11 +2285,13 @@ function drawAlienBody(c, move, accessory, color, isMe, t) {
     c.beginPath();
     c.arc(0, -46, 19, Math.PI * 0.9, Math.PI * 2.1);
     c.fill();
+    strokeOutline(c, '#2f9e6b', 2);
   } else if (accessory === 'hat') {
     c.fillStyle = '#caa25a';
     c.beginPath();
     c.ellipse(0, -52, 24, 5, 0, 0, Math.PI * 2);
     c.fill();
+    strokeOutline(c, '#caa25a', 2);
   }
 
   drawSelfRing(c, isMe, -32, 27);
@@ -2263,6 +2325,8 @@ function drawGhostBody(c, move, accessory, color, isMe, t) {
   c.closePath();
   c.fill();
   c.globalAlpha = 1;
+  strokeOutline(c, color, 2.4);
+  drawFlatHighlight(c, -7, -20, 5, 7, 0.16);
 
   c.fillStyle = '#0d0a14';
   c.beginPath();
@@ -2275,11 +2339,13 @@ function drawGhostBody(c, move, accessory, color, isMe, t) {
     c.beginPath();
     c.arc(0, -28, 14, Math.PI * 0.9, Math.PI * 2.1);
     c.fill();
+    strokeOutline(c, '#2f9e6b', 1.8);
   } else if (accessory === 'hat') {
     c.fillStyle = '#caa25a';
     c.beginPath();
     c.ellipse(0, -32, 18, 4, 0, 0, Math.PI * 2);
     c.fill();
+    strokeOutline(c, '#caa25a', 1.8);
   }
 
   drawSelfRing(c, isMe, -14, 24);
@@ -2291,12 +2357,17 @@ function drawDragonBody(c, move, accessory, color, isMe, t) {
   c.translate(sway, -bob);
   drawShadow(c, sway, bob);
 
-  // queue
-  c.strokeStyle = color;
-  c.lineWidth = 6;
-  c.lineCap = 'round';
+  // queue (tube avec contour, comme les autres membres)
   c.beginPath();
   c.moveTo(0, 20); c.quadraticCurveTo(18, 26, 14, 10);
+  c.strokeStyle = shadeColor(color, -42);
+  c.lineWidth = 10;
+  c.lineCap = 'round';
+  c.stroke();
+  c.beginPath();
+  c.moveTo(0, 20); c.quadraticCurveTo(18, 26, 14, 10);
+  c.strokeStyle = color;
+  c.lineWidth = 6;
   c.stroke();
 
   // jambes
@@ -2305,11 +2376,14 @@ function drawDragonBody(c, move, accessory, color, isMe, t) {
   traceRoundRect(c, -12, 14, 8, 14, 3);
   traceRoundRect(c, 4, 14, 8, 14, 3);
   c.fill();
+  strokeOutline(c, color, 2.2);
 
   // corps
   c.fillStyle = color;
   roundRect(c, -15, -14, 30, 32, 12);
   c.fill();
+  strokeOutline(c, color, 2.4);
+  drawFlatHighlight(c, -5, -6, 6, 10, 0.14);
 
   // ailes (s'écartent avec les mains en l'air / saut)
   const wingSpread = 0.4 + armLift * 0.6;
@@ -2321,6 +2395,9 @@ function drawDragonBody(c, move, accessory, color, isMe, t) {
   c.lineTo(-10, -14);
   c.closePath();
   c.fill();
+  c.globalAlpha = 1;
+  strokeOutline(c, color, 2);
+  c.globalAlpha = 0.85;
   c.beginPath();
   c.moveTo(14, -4);
   c.lineTo(14 + 22 * wingSpread, -14 - 10 * wingSpread);
@@ -2328,18 +2405,24 @@ function drawDragonBody(c, move, accessory, color, isMe, t) {
   c.closePath();
   c.fill();
   c.globalAlpha = 1;
+  strokeOutline(c, color, 2);
 
   // tête
   c.fillStyle = color;
   c.beginPath();
   c.arc(0, -28, 14, 0, Math.PI * 2);
   c.fill();
+  strokeOutline(c, color, 2.4);
   // cornes
   c.fillStyle = '#e9e4f2';
   c.beginPath();
   c.moveTo(-8, -38); c.lineTo(-4, -48); c.lineTo(-2, -38); c.closePath();
+  c.fill();
+  strokeOutline(c, '#e9e4f2', 1.8);
+  c.beginPath();
   c.moveTo(8, -38); c.lineTo(4, -48); c.lineTo(2, -38); c.closePath();
   c.fill();
+  strokeOutline(c, '#e9e4f2', 1.8);
   // yeux
   c.fillStyle = '#0d0a14';
   c.beginPath();
@@ -2352,11 +2435,13 @@ function drawDragonBody(c, move, accessory, color, isMe, t) {
     c.beginPath();
     c.arc(0, -33, 14.5, Math.PI * 0.85, Math.PI * 2.15);
     c.fill();
+    strokeOutline(c, '#2f9e6b', 1.8);
   } else if (accessory === 'hat') {
     c.fillStyle = '#caa25a';
     c.beginPath();
     c.ellipse(0, -40, 18, 4, 0, 0, Math.PI * 2);
     c.fill();
+    strokeOutline(c, '#caa25a', 1.8);
   }
 
   drawSelfRing(c, isMe, -28, 20);
@@ -2380,14 +2465,20 @@ function drawBlobBody(c, move, accessory, color, isMe, t) {
   c.fill();
   c.restore();
 
-  // tentacules
-  c.strokeStyle = color;
-  c.lineWidth = 5;
+  // tentacules (tube avec contour)
   c.lineCap = 'round';
   for (let i = -1; i <= 1; i++) {
     c.beginPath();
     c.moveTo(i * 10, 14);
     c.quadraticCurveTo(i * 14, 24 + Math.sin(t / 300 + i) * 4, i * 8, 30 + Math.sin(t / 300 + i) * 3);
+    c.strokeStyle = shadeColor(color, -42);
+    c.lineWidth = 8;
+    c.stroke();
+    c.beginPath();
+    c.moveTo(i * 10, 14);
+    c.quadraticCurveTo(i * 14, 24 + Math.sin(t / 300 + i) * 4, i * 8, 30 + Math.sin(t / 300 + i) * 3);
+    c.strokeStyle = color;
+    c.lineWidth = 5;
     c.stroke();
   }
 
@@ -2398,6 +2489,8 @@ function drawBlobBody(c, move, accessory, color, isMe, t) {
   c.beginPath();
   c.arc(0, -4 / squish, 20, 0, Math.PI * 2);
   c.fill();
+  strokeOutline(c, color, 2.6 / squish);
+  drawFlatHighlight(c, -7, -12 / squish, 5, 7 / squish, 0.16);
   c.restore();
 
   // œil unique
@@ -2405,6 +2498,7 @@ function drawBlobBody(c, move, accessory, color, isMe, t) {
   c.beginPath();
   c.arc(0, -8, 9, 0, Math.PI * 2);
   c.fill();
+  strokeOutline(c, '#fff', 2);
   c.fillStyle = '#0d0a14';
   c.beginPath();
   c.arc(0, -8, 4.5, 0, Math.PI * 2);
@@ -2415,11 +2509,13 @@ function drawBlobBody(c, move, accessory, color, isMe, t) {
     c.beginPath();
     c.arc(0, -20, 13, Math.PI * 0.9, Math.PI * 2.1);
     c.fill();
+    strokeOutline(c, '#2f9e6b', 1.8);
   } else if (accessory === 'hat') {
     c.fillStyle = '#caa25a';
     c.beginPath();
     c.ellipse(0, -24, 17, 4, 0, 0, Math.PI * 2);
     c.fill();
+    strokeOutline(c, '#caa25a', 1.8);
   }
 
   drawSelfRing(c, isMe, -8, 24);
@@ -2719,6 +2815,7 @@ function drawDjHead(ctx, avatarType, color, skinTone) {
     ctx.fillStyle = '#3a3a44';
     roundRect(ctx, -13, -34, 26, 22, 7);
     ctx.fill();
+    strokeOutline(ctx, '#3a3a44', 2.2);
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -2727,8 +2824,11 @@ function drawDjHead(ctx, avatarType, color, skinTone) {
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(0, -44, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
     ctx.arc(0, -22, 6, 0, Math.PI * 2);
     ctx.fill();
+    strokeOutline(ctx, color, 1.8);
     ctx.fillStyle = '#0d0a14';
     ctx.beginPath();
     ctx.arc(0, -22, 3, 0, Math.PI * 2);
@@ -2738,6 +2838,7 @@ function drawDjHead(ctx, avatarType, color, skinTone) {
     ctx.beginPath();
     ctx.ellipse(0, -24, 14, 17, 0, 0, Math.PI * 2);
     ctx.fill();
+    strokeOutline(ctx, color, 2.2);
     ctx.fillStyle = '#0d0a14';
     ctx.beginPath();
     ctx.ellipse(-6, -25, 4.5, 6.5, -0.2, 0, Math.PI * 2);
@@ -2750,6 +2851,7 @@ function drawDjHead(ctx, avatarType, color, skinTone) {
     ctx.arc(0, -22, 14, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
+    strokeOutline(ctx, color, 2.2);
     ctx.fillStyle = '#0d0a14';
     ctx.beginPath();
     ctx.arc(-5, -23, 2.2, 0, Math.PI * 2);
@@ -2760,11 +2862,16 @@ function drawDjHead(ctx, avatarType, color, skinTone) {
     ctx.beginPath();
     ctx.arc(0, -22, 13, 0, Math.PI * 2);
     ctx.fill();
+    strokeOutline(ctx, color, 2.2);
     ctx.fillStyle = '#e9e4f2';
     ctx.beginPath();
     ctx.moveTo(-6, -32); ctx.lineTo(-3, -40); ctx.lineTo(-1, -32); ctx.closePath();
+    ctx.fill();
+    strokeOutline(ctx, '#e9e4f2', 1.6);
+    ctx.beginPath();
     ctx.moveTo(6, -32); ctx.lineTo(3, -40); ctx.lineTo(1, -32); ctx.closePath();
     ctx.fill();
+    strokeOutline(ctx, '#e9e4f2', 1.6);
     ctx.fillStyle = '#0d0a14';
     ctx.beginPath();
     ctx.arc(-4, -23, 2, 0, Math.PI * 2);
@@ -2775,10 +2882,12 @@ function drawDjHead(ctx, avatarType, color, skinTone) {
     ctx.beginPath();
     ctx.arc(0, -20, 13, 0, Math.PI * 2);
     ctx.fill();
+    strokeOutline(ctx, color, 2.2);
     ctx.fillStyle = '#fff';
     ctx.beginPath();
     ctx.arc(0, -20, 6, 0, Math.PI * 2);
     ctx.fill();
+    strokeOutline(ctx, '#fff', 1.6);
     ctx.fillStyle = '#0d0a14';
     ctx.beginPath();
     ctx.arc(0, -20, 3, 0, Math.PI * 2);
@@ -2789,6 +2898,7 @@ function drawDjHead(ctx, avatarType, color, skinTone) {
     ctx.beginPath();
     ctx.arc(0, -22, 14, 0, Math.PI * 2);
     ctx.fill();
+    strokeOutline(ctx, skinTone, 2.2);
     ctx.strokeStyle = color;
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -2798,6 +2908,12 @@ function drawDjHead(ctx, avatarType, color, skinTone) {
     ctx.beginPath();
     ctx.arc(-14, -18, 4, 0, Math.PI * 2);
     ctx.arc(14, -18, 4, 0, Math.PI * 2);
+    ctx.fill();
+    strokeOutline(ctx, color, 1.6);
+    ctx.fillStyle = '#2a2136';
+    ctx.beginPath();
+    ctx.arc(-6, -22, 1.6, 0, Math.PI * 2);
+    ctx.arc(6, -22, 1.6, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -2858,24 +2974,23 @@ function drawDjOnStage(p, isMe, t) {
     const lx = -14 - Math.cos(angle) * armLen, ly = shoulderY - Math.sin(angle) * armLen;
     const rx = 14 + Math.cos(angle) * armLen, ry = shoulderY - Math.sin(angle) * armLen;
 
+    // bras (dessinés avant le torse pour passer dessous à l'épaule)
+    drawLimbTube(ctx, -14, shoulderY, lx, ly, 9, color);
+    drawLimbTube(ctx, 14, shoulderY, rx, ry, 9, color);
+
     // corps
     ctx.fillStyle = color;
     roundRect(ctx, -15, -12, 30, 32, 10);
     ctx.fill();
+    strokeOutline(ctx, color, 2.4);
+    drawFlatHighlight(ctx, -5, -4, 6, 10, 0.14);
 
-    // bras
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 8;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(-14, shoulderY); ctx.lineTo(lx, ly);
-    ctx.moveTo(14, shoulderY); ctx.lineTo(rx, ry);
-    ctx.stroke();
     ctx.fillStyle = skinTone;
     ctx.beginPath();
     ctx.arc(lx, ly, 6, 0, Math.PI * 2);
     ctx.arc(rx, ry, 6, 0, Math.PI * 2);
     ctx.fill();
+    strokeOutline(ctx, skinTone, 1.8);
 
     // canon à cotillons, tenu entre les mains levées
     if (pose === 'dj_front_cannon') {
