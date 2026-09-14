@@ -211,7 +211,11 @@ const AUTO_LIGHT_COLORS = ['#ff5fa3', '#5ad1ff', '#ffd35a', '#4ade80', '#c084fc'
 // sur un bouton. Un court délai (comme pour un drop automatique) sert juste
 // à synchroniser tout le monde sur l'instant exact du déclenchement.
 const MANUAL_EFFECT_LEAD_MS = 350;
-const STROBE_INTENSITY_DEFAULT = 0.9;
+// Intensité volontairement plafonnée assez bas (cf. STROBE_INTENSITY_MAX) :
+// un stroboscope plein écran très lumineux et rapide est un vrai risque pour
+// les personnes photosensibles/épileptiques, pas seulement un effet "fort".
+const STROBE_INTENSITY_DEFAULT = 0.35;
+const STROBE_INTENSITY_MAX = 0.45;
 const STROBE_DURATION_DEFAULT_MS = 1400;
 const STROBE_DURATION_MIN_MS = 200;
 const STROBE_DURATION_MAX_MS = 5000;
@@ -263,7 +267,10 @@ function getOrCreateRoom(roomId) {
       djMode: 'fixed', // 'fixed' (le créateur reste DJ) ou 'queue' (file d'attente façon plug.dj)
       djQueue: [],      // liste d'ids en attente de leur tour, en mode 'queue'
       // Passage DJ en cours : remis à zéro à chaque nouveau passage (cf. settleDjTurn).
-      currentDjTurn: { settled: false },
+      // `trackStarted` : vrai dès que ce DJ a lancé un morceau pendant son passage —
+      // sert (en mode file d'attente, avec du monde en attente) à l'empêcher d'en
+      // relancer un autre avant de céder la main (cf. djCanStartNewTrack).
+      currentDjTurn: { settled: false, trackStarted: false },
       // Case la plus basse (fraction 0..1) où placer un objet/une case disco,
       // affinée au fil des connexions par le "minY" que chaque navigateur
       // signale (cf. isValidFloorMinY) — jamais rien sur la barrière.
@@ -289,7 +296,7 @@ function getOrCreateRoom(roomId) {
         fireballs: { on: false, color: '#ff7a3d', count: 2 },
         sparks: { on: false, color: '#ffd35a', count: 4, intensity: 0.6 },
         discoball: { on: false, color: '#ffffff' },
-        smoke: { on: false, color: '#cfd6e6', count: 2 },
+        smoke: { on: false, color: '#cfd6e6', count: 4 },
         power: 0.6,
         speed: 1.0,
         // si activé, le serveur pilote lui-même les effets ci-dessus au rythme
@@ -404,6 +411,7 @@ io.on('connection', (socket) => {
       creatorId: room.creatorId,
       djMode: room.djMode,
       djQueue: room.djQueue,
+      canStartNewTrack: djCanStartNewTrack(room),
       lightEffects: room.lightEffects,
       round: {
         active: room.round.active,
@@ -486,6 +494,7 @@ io.on('connection', (socket) => {
     room.djMode = mode === 'queue' ? 'queue' : 'fixed';
     if (room.djMode === 'fixed') room.djQueue = [];
     io.to(currentRoomId).emit('dj-mode-changed', { mode: room.djMode, queue: room.djQueue });
+    emitDjTurnState(room, currentRoomId);
   });
 
   socket.on('join-dj-queue', () => {
@@ -495,6 +504,7 @@ io.on('connection', (socket) => {
     if (socket.id === room.djId) return; // déjà DJ, pas besoin de faire la queue
     if (!room.djQueue.includes(socket.id)) room.djQueue.push(socket.id);
     io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
+    emitDjTurnState(room, currentRoomId);
   });
 
   socket.on('leave-dj-queue', () => {
@@ -503,6 +513,7 @@ io.on('connection', (socket) => {
     if (!room) return;
     room.djQueue = room.djQueue.filter(id => id !== socket.id);
     io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
+    emitDjTurnState(room, currentRoomId);
   });
 
   // Le DJ actuel décide de passer la main tout de suite (bouton "Passer la main") :
@@ -567,6 +578,7 @@ io.on('connection', (socket) => {
     if (!currentRoomId || !videoId) return;
     const room = rooms.get(currentRoomId);
     if (!room || socket.id !== room.djId) return;
+    if (!djCanStartNewTrack(room)) return; // doit d'abord céder la main (file d'attente non vide)
     clearRoomTrackFile(room); // on quitte un éventuel fichier importé précédent
     room.currentVideo = {
       source: 'youtube',
@@ -576,10 +588,12 @@ io.on('connection', (socket) => {
       positionSec: 0,
       anchorAt: Date.now() + 6000 // 6 secondes de marge avant le vrai départ
     };
+    room.currentDjTurn.trackStarted = true;
     io.to(currentRoomId).emit('video-state', room.currentVideo);
     // le mini-jeu de ramassage démarre en même temps que la musique : le décompte
     // affiché à tout le monde vise ce même "top départ" (anchorAt).
     startRoundCountdown(room, currentRoomId);
+    emitDjTurnState(room, currentRoomId);
   });
 
   // Le DJ a importé un fichier audio/vidéo local (MP3, MP4, WAV...) plutôt que
@@ -590,6 +604,7 @@ io.on('connection', (socket) => {
     if (!currentRoomId || !url) return;
     const room = rooms.get(currentRoomId);
     if (!room || socket.id !== room.djId) return;
+    if (!djCanStartNewTrack(room)) return; // doit d'abord céder la main (file d'attente non vide)
     const urlStr = String(url);
     // seuls les fichiers qu'on vient nous-mêmes de stocker via /upload-track
     // sont acceptés (empêche de faire pointer tout le monde vers une URL arbitraire)
@@ -606,8 +621,10 @@ io.on('connection', (socket) => {
       positionSec: 0,
       anchorAt: Date.now() + 6000
     };
+    room.currentDjTurn.trackStarted = true;
     io.to(currentRoomId).emit('video-state', room.currentVideo);
     startRoundCountdown(room, currentRoomId);
+    emitDjTurnState(room, currentRoomId);
   });
 
   // Contrôle de lecture (pause, reprise, avance/retour) : réservé au DJ actuel,
@@ -676,7 +693,7 @@ io.on('connection', (socket) => {
     if (room.lightEffects.autoMode) return; // la régie auto décide seule dans ce mode
     const color = isHexColor(payload.color) ? payload.color : '#ffffff';
     const intensityRaw = Number(payload.intensity);
-    const intensity = Number.isFinite(intensityRaw) ? clamp(intensityRaw, 0.1, 1) : STROBE_INTENSITY_DEFAULT;
+    const intensity = Number.isFinite(intensityRaw) ? clamp(intensityRaw, 0.1, STROBE_INTENSITY_MAX) : STROBE_INTENSITY_DEFAULT;
     const durationRaw = Math.round(Number(payload.durationMs));
     const durationMs = Number.isFinite(durationRaw) ? clamp(durationRaw, STROBE_DURATION_MIN_MS, STROBE_DURATION_MAX_MS) : STROBE_DURATION_DEFAULT_MS;
     const dropAt = Date.now() + MANUAL_EFFECT_LEAD_MS;
@@ -741,7 +758,7 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
-const validLaserStyles = ['rotating', 'fan', 'cross'];
+const validLaserStyles = ['rotating', 'fan', 'cross', 'sweep', 'converge', 'chase'];
 function isHexColor(c) {
   return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
 }
@@ -757,7 +774,7 @@ function sanitizeLightEffects(payload, previous) {
   const validFireballsCounts = [2, 4, 6, 8];
   const fireballsCountRaw = Math.round(Number(fireballsIn.count));
   const smokeIn = payload.smoke || {};
-  const validSmokeCounts = [1, 2, 3, 4];
+  const validSmokeCounts = [1, 2, 3, 4, 5, 6, 7];
   const smokeCountRaw = Math.round(Number(smokeIn.count));
   return {
     flash: {
@@ -788,7 +805,7 @@ function sanitizeLightEffects(payload, previous) {
     smoke: {
       on: !!smokeIn.on,
       color: isHexColor(smokeIn.color) ? smokeIn.color : (previous.smoke ? previous.smoke.color : '#cfd6e6'),
-      count: validSmokeCounts.includes(smokeCountRaw) ? smokeCountRaw : (previous.smoke ? previous.smoke.count : 2)
+      count: validSmokeCounts.includes(smokeCountRaw) ? smokeCountRaw : (previous.smoke ? previous.smoke.count : 4)
     },
     power: Number.isFinite(power) ? clamp(power, 0, 1) : previous.power,
     speed: Number.isFinite(speed) ? clamp(speed, 0.3, 2.5) : previous.speed,
@@ -830,7 +847,7 @@ function scheduleAutoLightsTick(room, roomId) {
         intensity: 0.3 + Math.random() * 0.7
       },
       discoball: { on: Math.random() < 0.8, color: pick(AUTO_LIGHT_COLORS) },
-      smoke: { on: Math.random() < 0.35, color: pick(AUTO_LIGHT_COLORS), count: 1 + Math.floor(Math.random() * 4) },
+      smoke: { on: Math.random() < 0.35, color: pick(AUTO_LIGHT_COLORS), count: 2 + Math.floor(Math.random() * 5) },
       power: 0.4 + Math.random() * 0.6,
       speed: 0.6 + Math.random() * 1.4,
       autoMode: true
@@ -890,7 +907,23 @@ function settleDjTurn(room, roomId) {
 
   endRound(room, roomId);
   scheduleSaveProfiles();
-  room.currentDjTurn = { settled: false };
+  room.currentDjTurn = { settled: false, trackStarted: false };
+  emitDjTurnState(room, roomId);
+}
+
+// Vrai si le DJ actuel a le droit de lancer un (nouveau) morceau : toujours
+// vrai en mode DJ unique ou si la file d'attente est vide, mais faux en mode
+// file d'attente dès que ce DJ a déjà lancé un morceau pendant son passage et
+// qu'au moins une personne attend son tour — il doit d'abord céder la main
+// (cf. "next-dj" ou la fin naturelle du morceau) plutôt que d'en relancer un
+// autre indéfiniment.
+function djCanStartNewTrack(room) {
+  if (room.djMode !== 'queue') return true;
+  if (room.djQueue.length === 0) return true;
+  return !room.currentDjTurn.trackStarted;
+}
+function emitDjTurnState(room, roomId) {
+  io.to(roomId).emit('dj-turn-state', { canStartNewTrack: djCanStartNewTrack(room) });
 }
 
 // --- mini-jeu de ramassage d'objets sur la piste ---
@@ -989,7 +1022,7 @@ function scheduleMusicDropTick(room, roomId) {
       return;
     }
     const dropAt = Date.now() + MUSIC_DROP_LEAD_MS;
-    io.to(roomId).emit('music-drop', { dropAt, durationMs: MUSIC_DROP_STROBE_MS, color: '#ffffff', intensity: 0.92 });
+    io.to(roomId).emit('music-drop', { dropAt, durationMs: MUSIC_DROP_STROBE_MS, color: '#ffffff', intensity: STROBE_INTENSITY_MAX });
     scheduleMusicDropTick(room, roomId);
   }, delay);
   room.round.timers.push(timer);
