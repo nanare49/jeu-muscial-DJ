@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const multer = require('multer');
 
 const app = express();
 const server = http.createServer(app);
@@ -22,6 +23,47 @@ const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+// --- fichiers audio/vidéo importés par un DJ (MP3, MP4, WAV...), en alternative
+// au lien YouTube. Stockés temporairement sur le disque (comme data/profiles.json,
+// ça ne survit pas à un redéploiement sur un hébergeur au disque éphémère, mais
+// c'est très bien pour la durée d'une soirée) et nettoyés dès qu'un morceau est
+// remplacé ou que la salle se vide (cf. clearRoomTrackFile).
+const TRACKS_DIR = path.join(__dirname, 'data', 'tracks');
+try { fs.mkdirSync(TRACKS_DIR, { recursive: true }); } catch (e) { /* déjà là */ }
+app.use('/tracks', express.static(TRACKS_DIR));
+
+const MAX_TRACK_SIZE_BYTES = 30 * 1024 * 1024; // 30 Mo : largement assez pour un morceau compressé
+const ALLOWED_TRACK_MIMETYPES = new Set([
+  'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac',
+  'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/webm', 'audio/flac',
+  'video/mp4', 'video/webm'
+]);
+const trackUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, TRACKS_DIR),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).slice(0, 10).replace(/[^a-zA-Z0-9.]/g, '');
+      cb(null, crypto.randomBytes(12).toString('hex') + ext);
+    }
+  }),
+  limits: { fileSize: MAX_TRACK_SIZE_BYTES },
+  fileFilter: (req, file, cb) => cb(null, ALLOWED_TRACK_MIMETYPES.has(file.mimetype))
+});
+
+app.post('/upload-track', (req, res) => {
+  trackUpload.single('track')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Fichier trop volumineux (30 Mo max).' : "Import du fichier impossible.";
+      return res.status(400).json({ error: msg });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Format non reconnu (fichier audio ou vidéo attendu).' });
+    res.json({
+      url: '/tracks/' + req.file.filename,
+      name: String(req.body && req.body.name || req.file.originalname || 'Morceau importé').slice(0, 100)
+    });
+  });
+});
 
 // Toutes les salles actives, indexées par leur code.
 // roomId -> { decor, players: { socketId -> {...} }, currentVideo }
@@ -138,12 +180,16 @@ const DISCO_TILE_MAX_LIT = 3;
 const DISCO_TILE_PICKUP_RADIUS = 0.045;
 const DISCO_TILE_COLORS = ['#ff4d6d', '#4ade80', '#4da6ff', '#c084fc', '#ff5fa3', '#33e6e6', '#ff8c3d', '#ffd35a'];
 
-// --- ambiance musicale simulée : comme le jeu lit la musique via une vidéo
-// YouTube intégrée, son signal audio réel n'est pas accessible (restriction
-// cross-origin de l'iframe) — impossible d'analyser le rythme pour de vrai.
-// On simule donc un tempo (BPM) et des "drops" à intervalles aléatoires,
-// calés sur le même "top départ" (anchorAt) que la vidéo pour que tout le
-// monde les vive exactement au même moment. ---
+// --- ambiance musicale simulée : quand le morceau vient d'une vidéo YouTube
+// intégrée, son signal audio réel n'est pas accessible (restriction cross-origin
+// de l'iframe) — impossible d'analyser le rythme pour de vrai. On simule donc un
+// tempo (BPM) et des "drops" à intervalles aléatoires, calés sur le même "top
+// départ" (anchorAt) que la vidéo pour que tout le monde les vive exactement au
+// même moment. Ce BPM simulé ne sert QUE pour le "drop" surprise programmé
+// ci-dessous : quand le morceau est un fichier importé (MP3/MP4/...) plutôt
+// qu'un lien YouTube, le rythme de la piste (vibration/assombrissement) n'utilise
+// plus cette simulation — chaque navigateur analyse alors le vrai son via l'API
+// Web Audio (cf. `ensureAudioGraph`/`updateRealMusicEnergy` côté client). ---
 const MUSIC_PULSE_BPM_MIN = 100;
 const MUSIC_PULSE_BPM_MAX = 132;
 const MUSIC_DROP_MIN_MS = 22000;
@@ -210,6 +256,9 @@ function getOrCreateRoom(roomId) {
       decor: 'mainstage',
       players: {},
       currentVideo: null,
+      // Chemin disque du fichier importé actuellement chargé (cf. clearRoomTrackFile) ;
+      // null quand c'est un lien YouTube ou qu'aucun morceau n'est encore chargé.
+      uploadedTrackFilePath: null,
       creatorId: null,
       djMode: 'fixed', // 'fixed' (le créateur reste DJ) ou 'queue' (file d'attente façon plug.dj)
       djQueue: [],      // liste d'ids en attente de leur tour, en mode 'queue'
@@ -252,9 +301,20 @@ function getOrCreateRoom(roomId) {
   return rooms.get(roomId);
 }
 
+// Supprime du disque le fichier importé actuellement chargé par cette salle
+// (s'il y en a un), quand il est remplacé par un autre morceau ou que la salle
+// se vide — évite d'accumuler des fichiers orphelins sur la durée.
+function clearRoomTrackFile(room) {
+  if (room.uploadedTrackFilePath) {
+    fs.unlink(room.uploadedTrackFilePath, () => {});
+    room.uploadedTrackFilePath = null;
+  }
+}
+
 function cleanupRoomIfEmpty(roomId) {
   const room = rooms.get(roomId);
   if (room && Object.keys(room.players).length === 0) {
+    clearRoomTrackFile(room);
     rooms.delete(roomId);
   }
 }
@@ -506,7 +566,9 @@ io.on('connection', (socket) => {
     if (!currentRoomId || !videoId) return;
     const room = rooms.get(currentRoomId);
     if (!room || socket.id !== room.djId) return;
+    clearRoomTrackFile(room); // on quitte un éventuel fichier importé précédent
     room.currentVideo = {
+      source: 'youtube',
       videoId,
       title: String(title || '').slice(0, 100),
       paused: false,
@@ -516,6 +578,34 @@ io.on('connection', (socket) => {
     io.to(currentRoomId).emit('video-state', room.currentVideo);
     // le mini-jeu de ramassage démarre en même temps que la musique : le décompte
     // affiché à tout le monde vise ce même "top départ" (anchorAt).
+    startRoundCountdown(room, currentRoomId);
+  });
+
+  // Le DJ a importé un fichier audio/vidéo local (MP3, MP4, WAV...) plutôt que
+  // collé un lien YouTube : même mécanique de "top départ" commun, mais cette
+  // fois via un vrai élément <audio>, ce qui permet à chaque navigateur d'analyser
+  // le vrai son (cf. `ensureAudioGraph` côté client) au lieu du rythme simulé.
+  socket.on('play-file-track', ({ url, name }) => {
+    if (!currentRoomId || !url) return;
+    const room = rooms.get(currentRoomId);
+    if (!room || socket.id !== room.djId) return;
+    const urlStr = String(url);
+    // seuls les fichiers qu'on vient nous-mêmes de stocker via /upload-track
+    // sont acceptés (empêche de faire pointer tout le monde vers une URL arbitraire)
+    if (!urlStr.startsWith('/tracks/')) return;
+    const filePath = path.join(TRACKS_DIR, path.basename(urlStr));
+    if (!fs.existsSync(filePath)) return; // a dû expirer/être nettoyé entre-temps
+    clearRoomTrackFile(room);
+    room.uploadedTrackFilePath = filePath;
+    room.currentVideo = {
+      source: 'file',
+      url: urlStr,
+      title: String(name || 'Morceau importé').slice(0, 100),
+      paused: false,
+      positionSec: 0,
+      anchorAt: Date.now() + 6000
+    };
+    io.to(currentRoomId).emit('video-state', room.currentVideo);
     startRoundCountdown(room, currentRoomId);
   });
 
