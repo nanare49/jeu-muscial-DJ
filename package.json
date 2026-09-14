@@ -1,0 +1,14 @@
+{
+  "name": "jeu-musical-serveur-minimal",
+  "version": "0.2.0",
+  "description": "Serveur minimal : salles multiples, synchro position/pose/chat, lecture YouTube synchronisée",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^2.4.0",
+    "socket.io": "^4.7.5"
+  }
+}
