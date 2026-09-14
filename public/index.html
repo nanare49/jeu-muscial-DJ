@@ -108,6 +108,13 @@
     background: linear-gradient(135deg, #ff5f7a, #ff2e9a); border: none; color: #fff;
     font-weight: 700; font-size: 12px; border-radius: 999px; padding: 0 16px; cursor: pointer;
   }
+  #file-track-divider { font-size: 10px; color: var(--muted); text-align: center; margin: 8px 0 6px; }
+  #file-track-row { display: flex; }
+  #track-file-input {
+    flex: 1; width: 100%; background: var(--input-bg); border: 1px solid var(--line);
+    color: var(--text); border-radius: 999px; padding: 5px 10px; font-size: 11px;
+  }
+  #file-track-status { margin-top: 6px; font-size: 11px; color: var(--muted); }
   #youtube-now-playing { margin-top: 8px; font-size: 11px; color: var(--muted); }
   #youtube-player-wrap {
     margin-top: 8px; width: 100%; aspect-ratio: 16/9;
@@ -371,14 +378,20 @@
 
 <div id="youtube-box">
   <div class="drag-handle" title="Déplacer ce cadre">⠿</div>
-  <h2>Musique (YouTube)</h2>
+  <h2>Musique</h2>
   <div id="youtube-row">
     <input id="youtube-input" placeholder="Colle un lien YouTube...">
     <button id="youtube-launch-btn">Lancer</button>
   </div>
+  <div id="file-track-divider">— ou —</div>
+  <div id="file-track-row">
+    <input type="file" id="track-file-input" accept="audio/*,video/mp4,video/webm,.mp3,.mp4,.wav,.ogg,.m4a,.webm,.flac">
+  </div>
+  <div id="file-track-status"></div>
   <div id="youtube-non-dj-msg" style="display:none; font-size:11px; color:var(--muted); margin-top:4px;">🎧 Seul le DJ actuel peut choisir la musique.</div>
-  <div id="youtube-now-playing">Aucune vidéo en cours.</div>
+  <div id="youtube-now-playing">Aucune musique en cours.</div>
   <div id="youtube-player-wrap"><div id="youtube-player"></div></div>
+  <audio id="local-track-player" preload="auto" playsinline></audio>
   <div id="youtube-controls">
     <div class="btn" id="yt-back-btn">⏪ -10s</div>
     <div class="btn" id="yt-pause-btn">⏸ Pause</div>
@@ -746,11 +759,13 @@ socket.on('connect', () => {
 });
 socket.on('disconnect', () => { statusEl.textContent = 'Déconnecté'; statusEl.className = 'off'; });
 
+let myRoomId = null;
 socket.on('room-state', (state) => {
   selfId = state.selfId;
   players = state.players;
   currentDecor = state.decor || 'mainstage';
   document.getElementById('decor-select').value = currentDecor;
+  myRoomId = state.roomId;
 
   statusEl.textContent = 'Connecté — salle ' + state.roomId;
   statusEl.className = 'ok';
@@ -2728,8 +2743,18 @@ function loop(t) {
   // tremblement explicitement déclenché par le DJ fait bouger la piste, et
   // l'assombrissement reste éteint (pas demandé en mode manuel).
   const autoOn = !!(currentLightEffects && currentLightEffects.autoMode);
-  const beat = autoOn ? beatPhase() : null;
-  const autoEnv = beat !== null ? Math.pow(1 - beat, 3) : 0; // pic net au battement, retombe vite
+  let beat = null, autoEnv = 0;
+  if (autoOn && isRealAudioActive()) {
+    // fichier importé : vraie analyse du son (cf. updateRealMusicEnergy) au lieu
+    // du rythme simulé — `beat` ne sert plus ici qu'à signaler "une musique
+    // tourne" à drawMusicPulseOverlay, l'intensité vient directement du son réel.
+    updateRealMusicEnergy();
+    autoEnv = realMusicEnergy;
+    beat = 1 - autoEnv;
+  } else if (autoOn) {
+    beat = beatPhase();
+    autoEnv = beat !== null ? Math.pow(1 - beat, 3) : 0; // pic net au battement, retombe vite
+  }
 
   let shakeEnv = autoEnv;
   if (manualShake) {
@@ -3336,6 +3361,8 @@ function positionBubble(entry) {
 function renderYoutubeControlsVisibility() {
   const amIDJ = selfId && selfId === myDjId;
   document.getElementById('youtube-row').style.display = amIDJ ? 'flex' : 'none';
+  document.getElementById('file-track-divider').style.display = amIDJ ? 'block' : 'none';
+  document.getElementById('file-track-row').style.display = amIDJ ? 'flex' : 'none';
   document.getElementById('youtube-non-dj-msg').style.display = amIDJ ? 'none' : 'block';
   document.getElementById('youtube-controls').style.display = amIDJ ? 'flex' : 'none';
   document.getElementById('decor-select').disabled = !amIDJ;
@@ -3343,7 +3370,7 @@ function renderYoutubeControlsVisibility() {
   document.getElementById('light-fx-box').style.display = amIDJ ? 'block' : 'none';
 }
 
-// --- YouTube (lecture synchronisée, sans aucun compte requis) ---
+// --- Musique : lien YouTube, ou fichier audio/vidéo importé (MP3, MP4...) ---
 let ytPlayer = null;
 let ytPlayerReady = false;
 let ytVolume = parseInt(localStorage.getItem('ytVolume'), 10);
@@ -3352,7 +3379,11 @@ document.getElementById('yt-volume').value = ytVolume;
 document.getElementById('yt-volume-value').textContent = ytVolume;
 let pendingVideo = null;       // dernier état reçu avant que le lecteur soit prêt
 let currentLoadedVideoId = null;
-let currentVideoState = null;  // dernier état connu (paused, positionSec, anchorAt, videoId)
+let currentLoadedFileUrl = null;
+let currentVideoState = null;  // dernier état connu (source, paused, positionSec, anchorAt, videoId|url)
+const localTrackPlayer = document.getElementById('local-track-player');
+localTrackPlayer.muted = true; // même politique que la vidéo YouTube : démarre muet, débloqué par le premier clic
+localTrackPlayer.volume = ytVolume / 100;
 
 // --- correction d'horloge (pour un top départ fiable même avec une heure système décalée) ---
 let clockOffset = 0; // à ajouter à Date.now() pour estimer l'heure du serveur
@@ -3387,6 +3418,36 @@ document.getElementById('youtube-launch-btn').addEventListener('click', () => {
   socket.emit('chat', '📺 a lancé une vidéo YouTube');
 });
 
+// Import d'un fichier audio/vidéo local (MP3, MP4, WAV...) : envoyé au serveur
+// qui le stocke temporairement et donne une URL, puis "top départ" commun comme
+// pour un lien YouTube — sauf qu'ici, chaque navigateur ayant le vrai fichier,
+// les effets lumineux automatiques peuvent suivre une vraie analyse du son
+// (cf. ensureAudioGraph/updateRealMusicEnergy plus bas) au lieu du rythme simulé.
+document.getElementById('track-file-input').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const statusBox = document.getElementById('file-track-status');
+  statusBox.textContent = '⏳ Import en cours...';
+  try {
+    const formData = new FormData();
+    formData.append('track', file);
+    formData.append('name', file.name);
+    const res = await fetch('/upload-track', { method: 'POST', body: formData });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      statusBox.textContent = '⚠️ ' + (data.error || "Import impossible.");
+      return;
+    }
+    statusBox.textContent = '';
+    socket.emit('play-file-track', { url: data.url, name: data.name });
+    socket.emit('chat', '🎵 a lancé un morceau importé (' + data.name + ')');
+  } catch (err) {
+    statusBox.textContent = '⚠️ Import impossible (connexion).';
+  } finally {
+    e.target.value = ''; // permet de réimporter le même fichier plus tard si besoin
+  }
+});
+
 function currentActualPosition(cv) {
   if (!cv) return 0;
   return cv.paused ? cv.positionSec : cv.positionSec + Math.max(0, serverNow() - cv.anchorAt) / 1000;
@@ -3411,15 +3472,51 @@ document.getElementById('yt-forward-btn').addEventListener('click', () => {
 
 socket.on('video-state', (cv) => applyVideoState(cv));
 
-// Applique un état de lecture reçu du serveur : charge la vidéo si besoin,
-// se cale sur la bonne position, et joue ou met en pause selon le cas.
-// Recalcule toujours tout au moment de l'exécution (jamais figé à l'avance),
-// ce qui évite les décalages si le lecteur n'était pas encore prêt.
+// Applique un état de lecture reçu du serveur : charge le morceau si besoin,
+// se cale sur la bonne position, et joue ou met en pause selon le cas — que la
+// source soit une vidéo YouTube ou un fichier importé. Recalcule toujours tout
+// au moment de l'exécution (jamais figé à l'avance), ce qui évite les décalages
+// si le lecteur n'était pas encore prêt.
 function applyVideoState(cv) {
   currentVideoState = cv;
   document.getElementById('youtube-now-playing').textContent =
-    (cv.paused ? '⏸ En pause : ' : '▶ En cours : ') + (cv.title || cv.videoId);
+    (cv.paused ? '⏸ En pause : ' : '▶ En cours : ') + (cv.title || cv.videoId || cv.url);
   document.getElementById('yt-pause-btn').textContent = cv.paused ? '▶ Lecture' : '⏸ Pause';
+
+  const isFile = cv.source === 'file';
+  document.getElementById('youtube-player-wrap').style.display = isFile ? 'none' : '';
+
+  if (isFile) applyFileTrackState(cv);
+  else applyYoutubeState(cv);
+}
+
+function applyFileTrackState(cv) {
+  ytPlayer && ytPlayerReady && ytPlayer.pauseVideo(); // on quitte une éventuelle vidéo YouTube précédente
+
+  const delay = cv.anchorAt - serverNow();
+  const doApply = () => {
+    const pos = Math.max(0, currentActualPosition(cv));
+    const isNewTrack = cv.url !== currentLoadedFileUrl;
+    if (isNewTrack) {
+      currentLoadedFileUrl = cv.url;
+      localTrackPlayer.src = cv.url;
+      ensureAudioGraph();
+      localTrackPlayer.currentTime = pos;
+      const startPlayback = () => { if (!cv.paused) localTrackPlayer.play().catch(() => {}); };
+      if (localTrackPlayer.readyState >= 1) startPlayback();
+      else localTrackPlayer.addEventListener('loadedmetadata', startPlayback, { once: true });
+      if (cv.paused) localTrackPlayer.pause();
+    } else {
+      if (Math.abs(localTrackPlayer.currentTime - pos) > 1.5) localTrackPlayer.currentTime = pos;
+      if (cv.paused) localTrackPlayer.pause();
+      else localTrackPlayer.play().catch(() => {});
+    }
+  };
+  if (delay > 0) setTimeout(doApply, delay); else doApply();
+}
+
+function applyYoutubeState(cv) {
+  localTrackPlayer.pause(); // on quitte un éventuel fichier importé précédent
 
   const delay = cv.anchorAt - serverNow(); // positif seulement pour un tout nouveau morceau (top départ futur)
 
@@ -3478,8 +3575,10 @@ function unmutePlayer() {
   if (ytPlayer && ytPlayerReady) {
     ytPlayer.unMute();
     ytPlayer.setVolume(ytVolume);
-    document.getElementById('yt-unmute-btn').classList.add('hidden');
   }
+  localTrackPlayer.muted = false;
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  document.getElementById('yt-unmute-btn').classList.add('hidden');
 }
 document.getElementById('yt-unmute-btn').addEventListener('click', unmutePlayer);
 // tentative en plus : le tout premier clic n'importe où sur la page active aussi le son
@@ -3490,7 +3589,70 @@ document.getElementById('yt-volume').addEventListener('input', (e) => {
   document.getElementById('yt-volume-value').textContent = ytVolume;
   localStorage.setItem('ytVolume', ytVolume);
   if (ytPlayer && ytPlayerReady) ytPlayer.setVolume(ytVolume);
+  localTrackPlayer.volume = ytVolume / 100;
 });
+
+// --- analyse audio réelle d'un fichier importé --------------------------------
+// Un fichier joué via <audio> est, contrairement à l'iframe YouTube, accessible
+// à l'API Web Audio (même origine) : on peut donc en tirer une vraie mesure du
+// niveau des graves en direct, au lieu du rythme simulé utilisé pour YouTube
+// (cf. le commentaire équivalent côté serveur, sur MUSIC_PULSE_BPM_MIN).
+let audioCtx = null;
+let audioAnalyser = null;
+let audioDataArray = null;
+let audioGraphReady = false;
+let audioBassBinCount = 1; // nombre de "cases" du spectre couvrant la zone grave/kick (~20-220 Hz)
+let realMusicEnergy = 0;   // 0..1, mis à jour en continu tant qu'un fichier joue
+let bassRunningAvg = 0;
+
+function ensureAudioGraph() {
+  if (audioGraphReady) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtx.createMediaElementSource(localTrackPlayer);
+    audioAnalyser = audioCtx.createAnalyser();
+    audioAnalyser.fftSize = 2048; // résolution fine dans les graves (cf. audioBassBinCount)
+    audioAnalyser.smoothingTimeConstant = 0.35;
+    audioDataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+    source.connect(audioAnalyser);
+    audioAnalyser.connect(audioCtx.destination);
+    // largeur d'une case du spectre = sampleRate / fftSize : on en déduit combien
+    // de cases couvrent la zone grave/kick (~20-220 Hz), quel que soit le taux
+    // d'échantillonnage réel du contexte (souvent 44100 ou 48000 Hz).
+    const binHz = audioCtx.sampleRate / audioAnalyser.fftSize;
+    audioBassBinCount = Math.max(2, Math.round(220 / binHz));
+    audioGraphReady = true;
+  } catch (e) {
+    // Web Audio indisponible : tant pis, la piste retombera sur le rythme simulé.
+  }
+}
+
+// Estime un niveau d'énergie 0..1 à partir du vrai son en train de jouer, avec
+// un "coup" qui ressort quand les graves dépassent nettement leur moyenne
+// récente (façon détection de kick), pour un pic net sur chaque temps plutôt
+// qu'un simple niveau sonore plat.
+function updateRealMusicEnergy() {
+  if (!audioAnalyser || localTrackPlayer.paused) {
+    realMusicEnergy *= 0.9;
+    return;
+  }
+  audioAnalyser.getByteFrequencyData(audioDataArray);
+  let sum = 0;
+  for (let i = 0; i < audioBassBinCount; i++) sum += audioDataArray[i];
+  const bass = sum / audioBassBinCount / 255;
+  bassRunningAvg += (bass - bassRunningAvg) * 0.06;
+  const kick = Math.max(0, bass - bassRunningAvg * 1.15) * 2.4;
+  const target = Math.max(bass * 0.45, Math.min(1, kick));
+  realMusicEnergy += (target - realMusicEnergy) * 0.5;
+}
+
+// Vrai que si un fichier importé est actuellement la source ET que l'analyse
+// audio a pu démarrer (nécessite un premier clic sur la page, cf. unmutePlayer).
+// Volontairement vrai même en pause : updateRealMusicEnergy fait alors retomber
+// l'énergie à zéro tout seul, plutôt que de retomber sur le rythme simulé.
+function isRealAudioActive() {
+  return !!(currentVideoState && currentVideoState.source === 'file' && audioGraphReady);
+}
 </script>
 </body>
 </html>
