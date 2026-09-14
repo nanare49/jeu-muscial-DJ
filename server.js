@@ -289,6 +289,7 @@ function getOrCreateRoom(roomId) {
         fireballs: { on: false, color: '#ff7a3d', count: 2 },
         sparks: { on: false, color: '#ffd35a', count: 4, intensity: 0.6 },
         discoball: { on: false, color: '#ffffff' },
+        smoke: { on: false, color: '#cfd6e6', count: 2 },
         power: 0.6,
         speed: 1.0,
         // si activé, le serveur pilote lui-même les effets ci-dessus au rythme
@@ -755,6 +756,9 @@ function sanitizeLightEffects(payload, previous) {
   const fireballsIn = payload.fireballs || {};
   const validFireballsCounts = [2, 4, 6, 8];
   const fireballsCountRaw = Math.round(Number(fireballsIn.count));
+  const smokeIn = payload.smoke || {};
+  const validSmokeCounts = [1, 2, 3, 4];
+  const smokeCountRaw = Math.round(Number(smokeIn.count));
   return {
     flash: {
       on: !!(payload.flash && payload.flash.on),
@@ -780,6 +784,11 @@ function sanitizeLightEffects(payload, previous) {
     discoball: {
       on: !!(payload.discoball && payload.discoball.on),
       color: isHexColor(payload.discoball && payload.discoball.color) ? payload.discoball.color : previous.discoball.color
+    },
+    smoke: {
+      on: !!smokeIn.on,
+      color: isHexColor(smokeIn.color) ? smokeIn.color : (previous.smoke ? previous.smoke.color : '#cfd6e6'),
+      count: validSmokeCounts.includes(smokeCountRaw) ? smokeCountRaw : (previous.smoke ? previous.smoke.count : 2)
     },
     power: Number.isFinite(power) ? clamp(power, 0, 1) : previous.power,
     speed: Number.isFinite(speed) ? clamp(speed, 0.3, 2.5) : previous.speed,
@@ -821,6 +830,7 @@ function scheduleAutoLightsTick(room, roomId) {
         intensity: 0.3 + Math.random() * 0.7
       },
       discoball: { on: Math.random() < 0.8, color: pick(AUTO_LIGHT_COLORS) },
+      smoke: { on: Math.random() < 0.35, color: pick(AUTO_LIGHT_COLORS), count: 1 + Math.floor(Math.random() * 4) },
       power: 0.4 + Math.random() * 0.6,
       speed: 0.6 + Math.random() * 1.4,
       autoMode: true
