@@ -361,6 +361,7 @@
     <option value="mainstage">Mainstage Temple</option>
     <option value="mainstage_arena">Mainstage Arena</option>
     <option value="mainstage_circus">Mainstage Cirque</option>
+    <option value="mainstage_electro">Mainstage Electro</option>
     <option value="nightclub">Boîte de nuit</option>
     <option value="wheatfield">Champ de blé</option>
   </select>
@@ -468,6 +469,11 @@
   <div class="fx-row">
     <label><input type="checkbox" id="fx-discoball-on"> Boule à facettes</label>
     <input type="color" id="fx-discoball-color" value="#ffffff">
+  </div>
+
+  <div class="fx-row">
+    <label><input type="checkbox" id="fx-smoke-on"> Canon à fumée</label>
+    <input type="color" id="fx-smoke-color" value="#cfd6e6">
   </div>
 
   <div class="fx-slider-row">
@@ -632,6 +638,7 @@ let currentLightEffects = {
   fireballs: { on: false, color: '#ff7a3d', count: 2 },
   sparks: { on: false, color: '#ffd35a' },
   discoball: { on: false, color: '#ffffff' },
+  smoke: { on: false, color: '#cfd6e6', count: 2 },
   power: 0.6, speed: 1.0,
   autoMode: false
 };
@@ -1054,6 +1061,7 @@ function currentFxStateFromControls() {
       intensity: parseFloat(document.getElementById('fx-sparks-intensity').value)
     },
     discoball: { on: document.getElementById('fx-discoball-on').checked, color: document.getElementById('fx-discoball-color').value },
+    smoke: { on: document.getElementById('fx-smoke-on').checked, color: document.getElementById('fx-smoke-color').value, count: 2 },
     power: parseFloat(document.getElementById('fx-power').value),
     speed: parseFloat(document.getElementById('fx-speed').value),
     autoMode: document.getElementById('fx-auto-on').checked
@@ -1070,6 +1078,7 @@ const fxControlIds = [
   'fx-fireballs-on', 'fx-fireballs-color', 'fx-fireballs-count',
   'fx-sparks-on', 'fx-sparks-color', 'fx-sparks-count', 'fx-sparks-intensity',
   'fx-discoball-on', 'fx-discoball-color',
+  'fx-smoke-on', 'fx-smoke-color',
   'fx-power', 'fx-speed'
 ];
 fxControlIds.forEach(id => {
@@ -1126,6 +1135,10 @@ function syncLightEffectsControls() {
   document.getElementById('fx-sparks-intensity').value = le.sparks.intensity;
   document.getElementById('fx-discoball-on').checked = le.discoball.on;
   document.getElementById('fx-discoball-color').value = le.discoball.color;
+  if (le.smoke) {
+    document.getElementById('fx-smoke-on').checked = le.smoke.on;
+    document.getElementById('fx-smoke-color').value = le.smoke.color;
+  }
   document.getElementById('fx-power').value = le.power;
   document.getElementById('fx-speed').value = le.speed;
   document.getElementById('fx-auto-on').checked = !!le.autoMode;
@@ -1366,6 +1379,7 @@ const decorThemes = {
   mainstage: { sky1: '#241a33', sky2: '#08060c', stage: '#171223', accent: 'rgba(255,196,90,0.55)' },
   mainstage_arena: { sky1: '#1b2140', sky2: '#05060c', stage: '#14121c', accent: 'rgba(120,200,255,0.55)' },
   mainstage_circus: { sky1: '#3a1730', sky2: '#0c0610', stage: '#4a2038', accent: 'rgba(255,140,90,0.55)' },
+  mainstage_electro: { sky1: '#0c1a2e', sky2: '#03060c', stage: '#0f1420', accent: 'rgba(70,255,220,0.6)' },
   nightclub: { sky1: '#1a1024', sky2: '#040308', stage: '#0d0a14', accent: 'rgba(120,90,255,0.5)' },
   wheatfield: { sky1: '#3a2f1a', sky2: '#120e08', stage: '#2b2312', accent: 'rgba(255,200,90,0.5)' }
 };
@@ -1440,6 +1454,7 @@ function drawBackground(t, pulseEnv) {
   if (currentDecor === 'mainstage') drawMainstageTemple(theme, t);
   else if (currentDecor === 'mainstage_arena') drawMainstageArena(theme, t);
   else if (currentDecor === 'mainstage_circus') drawMainstageCircus(theme, t);
+  else if (currentDecor === 'mainstage_electro') drawMainstageElectro(theme, t);
   else drawGenericStageBackdrop(theme);
 
   drawDjBigScreen(t, pulseEnv || 0);
@@ -1481,7 +1496,7 @@ function djScreenBounds() {
 // lumineux allumé (flash en priorité, puis laser, boule à facettes, etc.),
 // ou une teinte neutre si rien n'est allumé.
 function activeLightTint() {
-  const le = currentLightEffects;
+  const le = getEffectiveLightEffects();
   if (!le) return '#7ee0ff';
   if (le.flash && le.flash.on) return le.flash.color;
   if (le.laser && le.laser.on) return le.laser.color;
@@ -1786,19 +1801,50 @@ function drawMainstageTemple(theme, t) {
   }
 
   [W * 0.10, W * 0.90].forEach((tx, i) => {
+    // Pylône de temple antique : forme trapézoïdale (base large, sommet plus
+    // étroit, façon obélisque) plutôt qu'un simple pilier droit — silhouette
+    // de tour de temple sans ambiguïté.
+    const baseW = W * 0.06, topW = W * 0.036;
+    const towerTopY = H * 0.075, towerBaseY = H * 0.34;
     ctx.fillStyle = shadeColor(theme.stage, -6);
-    ctx.fillRect(tx - W * 0.025, H * 0.06, W * 0.05, H * 0.28);
-
-    ctx.fillStyle = '#c22f2f';
     ctx.beginPath();
-    ctx.ellipse(tx, H * 0.06, W * 0.035, H * 0.03, 0, Math.PI, Math.PI * 2);
+    ctx.moveTo(tx - topW / 2, towerTopY);
+    ctx.lineTo(tx + topW / 2, towerTopY);
+    ctx.lineTo(tx + baseW / 2, towerBaseY);
+    ctx.lineTo(tx - baseW / 2, towerBaseY);
+    ctx.closePath();
+    ctx.fill();
+    // corniche claire qui marque le sommet du pylône
+    ctx.fillStyle = shadeColor(theme.stage, 14);
+    ctx.fillRect(tx - topW / 2 - 3, towerTopY, topW + 6, 7);
+    // gravures verticales stylisées
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 1.5;
+    [-1, 0, 1].forEach(g => {
+      ctx.beginPath();
+      ctx.moveTo(tx + g * topW * 0.28, towerTopY + 16);
+      ctx.lineTo(tx + g * baseW * 0.24, towerBaseY - 10);
+      ctx.stroke();
+    });
+
+    // vasque évasée (brasero), plus large que le pylône, portée à son sommet :
+    // c'est d'elle que jaillit la flamme, pour une silhouette de torche
+    // clairement lisible.
+    const bowlY = towerTopY - 2, bowlW = topW * 1.7, bowlH = 10;
+    ctx.fillStyle = '#8a7248';
+    ctx.beginPath();
+    ctx.moveTo(tx - bowlW / 2, bowlY - bowlH);
+    ctx.lineTo(tx + bowlW / 2, bowlY - bowlH);
+    ctx.lineTo(tx + bowlW * 0.32, bowlY);
+    ctx.lineTo(tx - bowlW * 0.32, bowlY);
+    ctx.closePath();
     ctx.fill();
     ctx.fillStyle = '#e8b84b';
-    ctx.fillRect(tx - 2, H * 0.025, 4, H * 0.04);
+    ctx.fillRect(tx - 2, bowlY - bowlH - 3, 4, 4);
 
     const flick = 0.75 + Math.sin(t / 140 + i * 2) * 0.25;
-    const torchBaseY = H * 0.335;
-    const torchH = 26 * flick, torchW = 15 * flick;
+    const torchBaseY = bowlY - bowlH - 2;
+    const torchH = 30 * flick, torchW = 17 * flick;
     ctx.beginPath();
     traceFlameShape(tx, torchBaseY, torchW, torchH);
     const torchGrad = ctx.createLinearGradient(tx, torchBaseY, tx, torchBaseY - torchH);
@@ -1824,13 +1870,54 @@ function drawMainstageArena(theme, t) {
   ctx.fillStyle = theme.stage;
   ctx.fillRect(W * 0.16, H * 0.15, W * 0.68, H * 0.20);
 
-  const arcColors = ['#ff4d6d', '#ffb703', '#8ecae6', '#06d6a0', '#a663cc'];
-  arcColors.forEach((color, i) => {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 5;
+  // Trusse portant une rangée de projecteurs mobiles qui balaient doucement
+  // la scène (façon vrai plan de feux de concert), plutôt que l'ancienne
+  // arche arc-en-ciel fixe.
+  const trussY = H * 0.155, trussX1 = W * 0.20, trussX2 = W * 0.80;
+  ctx.fillStyle = '#22222a';
+  ctx.fillRect(trussX1, trussY - 5, trussX2 - trussX1, 8);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  for (let x = trussX1; x <= trussX2; x += 14) {
+    ctx.beginPath(); ctx.moveTo(x, trussY - 5); ctx.lineTo(x, trussY + 3); ctx.stroke();
+  }
+
+  const spotColors = ['#ff4d6d', '#ffb703', '#8ecae6', '#06d6a0', '#a663cc', '#ff8c3d'];
+  spotColors.forEach((color, i) => {
+    const sx = trussX1 + (trussX2 - trussX1) * ((i + 0.5) / spotColors.length);
+    const sy = trussY + 4;
+    const pan = Math.sin(t / 1500 + i * 1.3) * 0.5; // léger balayage, chacun déphasé
+    const angle = Math.PI / 2 + pan;
+    const len = H * 0.26;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(pan * 0.4);
+    ctx.fillStyle = '#33333d';
+    roundRect(ctx, -6, -4, 12, 12, 3);
+    ctx.fill();
+    ctx.restore();
+
+    const x2 = sx + Math.cos(angle) * len;
+    const y2 = sy + Math.sin(angle) * len;
+    const perp = angle + Math.PI / 2;
+    const spread = len * 0.11;
+    const rgb = hexToRgb(color);
+    const beamGrad = ctx.createLinearGradient(sx, sy, x2, y2);
+    beamGrad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.5)`);
+    beamGrad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
+    ctx.fillStyle = beamGrad;
     ctx.beginPath();
-    ctx.ellipse(cx, H * 0.34, W * 0.36 - i * 8, H * 0.20 - i * 3, 0, Math.PI, Math.PI * 2);
-    ctx.stroke();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(x2 + Math.cos(perp) * spread, y2 + Math.sin(perp) * spread);
+    ctx.lineTo(x2 - Math.cos(perp) * spread, y2 - Math.sin(perp) * spread);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+    ctx.fill();
   });
 
   [W * 0.09, W * 0.91].forEach(tx => {
@@ -1858,16 +1945,115 @@ function drawMainstageArena(theme, t) {
   }
 }
 
+// --- Mainstage "Electro" : l'écran central (commun à tous les décors, cf.
+// djScreenBounds/drawDjBigScreen) flanqué de deux tours d'enceintes de sa
+// hauteur, cerclées de néons — ambiance club électro épurée. ---
+function drawMainstageElectro(theme, t) {
+  const { x: sx, y: sy, width: sw, height: sh } = djScreenBounds();
+
+  ctx.fillStyle = theme.stage;
+  ctx.fillRect(W * 0.10, sy - 10, W * 0.80, sh + 40);
+
+  const pulse = 0.5 + Math.sin(t / 500) * 0.5;
+  ctx.strokeStyle = `rgba(70,255,220,${0.35 + pulse * 0.4})`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(W * 0.10, sy + sh + 26);
+  ctx.lineTo(W * 0.90, sy + sh + 26);
+  ctx.stroke();
+
+  const stackW = Math.min(W * 0.11, sw * 0.22);
+  drawElectroSpeakerStack(sx - 14 - stackW, sy, stackW, sh, t, -1);
+  drawElectroSpeakerStack(sx + sw + 14, sy, stackW, sh, t, 1);
+}
+
+// Une tour d'enceintes façon festival électro : plusieurs caissons empilés,
+// chacun avec ses haut-parleurs (grave en bas, médiums au-dessus), le tout
+// cerclé d'un contour néon qui pulse doucement.
+function drawElectroSpeakerStack(x, y, w, h, t, side) {
+  const stages = 3;
+  const stageH = h / stages;
+  for (let i = 0; i < stages; i++) {
+    const sy0 = y + i * stageH;
+    ctx.fillStyle = shadeColor('#1a1a22', i % 2 === 0 ? 6 : -4);
+    roundRect(ctx, x, sy0 + 2, w, stageH - 4, 4);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const woofers = i === stages - 1 ? 1 : 2;
+    for (let wi = 0; wi < woofers; wi++) {
+      const cxw = x + w * ((wi + 1) / (woofers + 1));
+      const cyw = sy0 + stageH / 2;
+      const r = Math.min(w, stageH) * (woofers === 1 ? 0.32 : 0.26);
+      const thump = 1 + Math.sin(t / 260 + i * 2 + wi) * 0.05;
+      const grad = ctx.createRadialGradient(cxw, cyw, r * 0.1, cxw, cyw, r * thump);
+      grad.addColorStop(0, '#0c0c10');
+      grad.addColorStop(0.7, '#26262e');
+      grad.addColorStop(1, '#0a0a0e');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cxw, cyw, r * thump, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(70,255,220,0.35)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = '#050508';
+      ctx.beginPath();
+      ctx.arc(cxw, cyw, r * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  const neonPulse = 0.5 + Math.sin(t / 480 + (side || 0)) * 0.5;
+  ctx.strokeStyle = `rgba(70,255,220,${0.5 + neonPulse * 0.4})`;
+  ctx.lineWidth = 2.5;
+  ctx.shadowColor = 'rgba(70,255,220,0.8)';
+  ctx.shadowBlur = 10 + neonPulse * 10;
+  roundRect(ctx, x, y, w, h, 6);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
 // --- Mainstage "Cirque" : chapiteaux rayés, fanions, tourelles et grande roue ---
 function drawMainstageCircus(theme, t) {
   const cx = W / 2;
 
   [W * 0.08, W * 0.92].forEach(tx => {
+    const shaftTopY = H * 0.10, shaftBotY = H * 0.36, shaftW = W * 0.04;
     ctx.fillStyle = shadeColor(theme.stage, -10);
-    ctx.fillRect(tx - W * 0.02, H * 0.10, W * 0.04, H * 0.26);
-    ctx.fillStyle = shadeColor(theme.stage, 10);
+    ctx.fillRect(tx - shaftW / 2, shaftTopY, shaftW, shaftBotY - shaftTopY);
+    // toit conique pointu (façon chapiteau), plus large que le mât : silhouette
+    // de tourelle de cirque sans ambiguïté, plutôt qu'un dôme arrondi.
+    const roofW = shaftW * 2.1, roofH = H * 0.05;
+    const roofBaseY = shaftTopY + 4;
     ctx.beginPath();
-    ctx.ellipse(tx, H * 0.095, W * 0.028, H * 0.02, 0, Math.PI, Math.PI * 2);
+    ctx.moveTo(tx, roofBaseY - roofH);
+    ctx.lineTo(tx + roofW / 2, roofBaseY);
+    ctx.lineTo(tx - roofW / 2, roofBaseY);
+    ctx.closePath();
+    const roofGrad = ctx.createLinearGradient(tx, roofBaseY - roofH, tx, roofBaseY);
+    roofGrad.addColorStop(0, shadeColor(theme.stage, 26));
+    roofGrad.addColorStop(1, shadeColor(theme.stage, 4));
+    ctx.fillStyle = roofGrad;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // petit fanion tout en haut
+    ctx.strokeStyle = '#3a2f1a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(tx, roofBaseY - roofH);
+    ctx.lineTo(tx, roofBaseY - roofH - 10);
+    ctx.stroke();
+    ctx.fillStyle = theme.accent;
+    ctx.beginPath();
+    ctx.moveTo(tx, roofBaseY - roofH - 10);
+    ctx.lineTo(tx + 9, roofBaseY - roofH - 6);
+    ctx.lineTo(tx, roofBaseY - roofH - 3);
+    ctx.closePath();
     ctx.fill();
   });
 
@@ -1937,6 +2123,185 @@ function drawMainstageCircus(theme, t) {
     ctx.arc(W * 0.26 + i * (W * 0.48 / 9), H * 0.345, 2.5, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.restore();
+
+  // Petits numéros de piste (clown, acrobate, cracheur de flammes, cheval),
+  // glissés dans les coins libres du décor (jamais sous le grand écran ni sur
+  // la piste elle-même — cf. drawCircusClown & co.).
+  drawCircusClown(W * 0.045, H * 0.31, t, 0.8);
+  drawCircusAcrobat(W * 0.14, H * 0.13, t, 0.9);
+  drawCircusFireBreather(W * 0.955, H * 0.165, t, 0.8);
+  drawCircusHorse(W * 0.955, H * 0.32, t, 0.75);
+}
+
+// Petit clown flat-illustration : combinaison à pois, collerette, chapeau
+// pointu et nez rouge — idle bounce léger.
+function drawCircusClown(cx, baseY, t, scale) {
+  const bob = Math.sin(t / 400) * 2;
+  ctx.save();
+  ctx.translate(cx, baseY + bob);
+  ctx.scale(scale || 1, scale || 1);
+  ctx.strokeStyle = '#2d6b6b';
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-6, -6); ctx.lineTo(-9, 14);
+  ctx.moveTo(6, -6); ctx.lineTo(9, 14);
+  ctx.stroke();
+  ctx.fillStyle = '#e8b84b';
+  ctx.beginPath(); ctx.ellipse(-11, 15, 6, 3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(11, 15, 6, 3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#e8536b';
+  roundRect(ctx, -14, -30, 28, 26, 8);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  [[-6, -22], [5, -16], [-2, -10]].forEach(([dx, dy]) => {
+    ctx.beginPath(); ctx.arc(dx, dy, 2.4, 0, Math.PI * 2); ctx.fill();
+  });
+  ctx.fillStyle = '#f3ede0';
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.ellipse(Math.cos(a) * 13, -30 + Math.sin(a) * 5, 6, 3, a, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#ffe3c2';
+  ctx.beginPath(); ctx.arc(0, -42, 12, 0, Math.PI * 2); ctx.fill();
+  strokeOutline(ctx, '#ffe3c2', 1.6);
+  ctx.fillStyle = '#ff8c3d';
+  ctx.beginPath(); ctx.arc(-11, -40, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(11, -40, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#4da6ff';
+  ctx.beginPath();
+  ctx.moveTo(-9, -50); ctx.lineTo(9, -50); ctx.lineTo(0, -68);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ffd35a';
+  ctx.beginPath(); ctx.arc(0, -68, 2.6, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#1c1a24';
+  ctx.beginPath(); ctx.arc(-4, -43, 1.6, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(4, -43, 1.6, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#1c1a24';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.arc(0, -38, 5, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  ctx.fillStyle = '#e8384a';
+  ctx.beginPath(); ctx.arc(0, -40, 3.4, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// Acrobate suspendue dans un cerceau, en pleine figure (étoile), qui tourne
+// doucement — placée juste au-dessus de la grande roue de feu d'artifice.
+function drawCircusAcrobat(cx, cy, t, scale) {
+  const spin = t / 900;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale || 1, scale || 1);
+  ctx.rotate(Math.sin(spin) * 0.5);
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(0, 0, 22, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#c084fc';
+  roundRect(ctx, -5, -12, 10, 18, 4);
+  ctx.fill();
+  strokeOutline(ctx, '#c084fc', 1.4);
+  ctx.fillStyle = '#ffe3c2';
+  ctx.beginPath(); ctx.arc(0, -16, 6, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#c084fc';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-5, -8); ctx.lineTo(-18, -16);
+  ctx.moveTo(5, -8); ctx.lineTo(18, -16);
+  ctx.moveTo(-3, 6); ctx.lineTo(-14, 16);
+  ctx.moveTo(3, 6); ctx.lineTo(14, 16);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Cracheur de flammes : tête renversée en arrière, jet de flamme soufflé
+// vers le haut (même silhouette de flamme que les torches).
+function drawCircusFireBreather(cx, baseY, t, scale) {
+  const puff = 0.6 + Math.abs(Math.sin(t / 160)) * 0.4;
+  ctx.save();
+  ctx.translate(cx, baseY);
+  ctx.scale(scale || 1, scale || 1);
+  ctx.strokeStyle = '#1c1a24';
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-5, -6); ctx.lineTo(-7, 14);
+  ctx.moveTo(5, -6); ctx.lineTo(7, 14);
+  ctx.stroke();
+  ctx.fillStyle = '#3a2438';
+  roundRect(ctx, -10, -28, 20, 24, 6);
+  ctx.fill();
+  strokeOutline(ctx, '#3a2438', 1.6);
+  ctx.save();
+  ctx.translate(0, -34);
+  ctx.rotate(-0.35);
+  ctx.fillStyle = '#e0a878';
+  ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.translate(6, -42);
+  ctx.rotate(-0.5);
+  const fh = 40 * puff, fw = 16 * puff;
+  ctx.beginPath();
+  traceFlameShape(0, 0, fw, fh);
+  const fg = ctx.createLinearGradient(0, 0, 0, -fh);
+  fg.addColorStop(0, 'rgba(150,20,20,0.9)');
+  fg.addColorStop(0.55, 'rgba(255,120,40,0.92)');
+  fg.addColorStop(1, 'rgba(255,214,120,0.85)');
+  ctx.fillStyle = fg;
+  ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+
+// Cheval au galop, vu de profil, tourné vers le centre de la scène, avec
+// panache façon cheval de cirque.
+function drawCircusHorse(cx, baseY, t, scale) {
+  const gallop = Math.sin(t / 260);
+  ctx.save();
+  ctx.translate(cx, baseY);
+  ctx.scale(-(scale || 1), scale || 1);
+  ctx.fillStyle = '#8a5a34';
+  ctx.beginPath();
+  ctx.ellipse(0, -14, 20, 11, -0.08, 0, Math.PI * 2);
+  ctx.fill();
+  strokeOutline(ctx, '#8a5a34', 1.6);
+  ctx.beginPath();
+  ctx.moveTo(16, -20);
+  ctx.quadraticCurveTo(26, -30, 24, -38);
+  ctx.quadraticCurveTo(30, -40, 32, -34);
+  ctx.quadraticCurveTo(26, -26, 18, -12);
+  ctx.closePath();
+  ctx.fill();
+  strokeOutline(ctx, '#8a5a34', 1.4);
+  ctx.fillStyle = '#3a2a1a';
+  ctx.beginPath();
+  ctx.moveTo(14, -22); ctx.quadraticCurveTo(20, -32, 26, -40);
+  ctx.quadraticCurveTo(20, -30, 12, -18);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#3a2a1a';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-14, -8); ctx.lineTo(-20 + gallop * 6, 12);
+  ctx.moveTo(-4, -6); ctx.lineTo(2 - gallop * 8, 12);
+  ctx.moveTo(10, -8); ctx.lineTo(16 + gallop * 6, 12);
+  ctx.stroke();
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(-20, -16);
+  ctx.quadraticCurveTo(-30, -8 + gallop * 4, -28, 4);
+  ctx.stroke();
+  ctx.fillStyle = '#ff5fa3';
+  ctx.beginPath();
+  ctx.moveTo(24, -38); ctx.lineTo(30, -46); ctx.lineTo(26, -34);
+  ctx.closePath(); ctx.fill();
   ctx.restore();
 }
 
@@ -2749,6 +3114,7 @@ function loop(t) {
     // du rythme simulé — `beat` ne sert plus ici qu'à signaler "une musique
     // tourne" à drawMusicPulseOverlay, l'intensité vient directement du son réel.
     updateRealMusicEnergy();
+    updateReactiveAutoVJ(t);
     autoEnv = realMusicEnergy;
     beat = 1 - autoEnv;
   } else if (autoOn) {
@@ -2798,21 +3164,26 @@ function hexToRgb(hex) {
 }
 
 function drawLightEffectsBackground(t) {
-  const le = currentLightEffects;
+  const le = getEffectiveLightEffects();
   if (!le) return;
   if (le.laser.on) drawLaserEffect(t, le.power, le.speed, le.laser);
   if (le.discoball.on) drawDiscoBallEffect(t, le.power, le.speed, le.discoball.color);
   if (le.fireballs.on) drawFireballsEffect(t, le.power, le.speed, le.fireballs);
   if (le.sparks.on) drawSparksEffect(t, le.power, le.speed, le.sparks);
+  if (le.smoke && le.smoke.on) drawSmokeCannonEffect(t, le.power, le.speed, le.smoke);
 }
 
 // Plusieurs points de départ de laser répartis sur la scène (comme une rangée
-// de lyres motorisées), chacun tirant son propre faisceau.
+// de lyres motorisées), chacun tirant son propre faisceau. Quand la régie
+// réactive pilote l'affichage (fichier importé + mode auto), le balayage suit
+// `vjLaserPhase` — qui avance plus ou moins vite selon l'énergie de la mélodie
+// (cf. updateReactiveAutoVJ) — plutôt qu'une vitesse constante liée à `t`.
 function drawLaserEffect(t, power, speed, laser) {
   const originY = H * 0.14;
   const sourceCount = laser.count || 4;
   const len = H * 1.1;
-  const alphaHex = Math.round(80 + power * 175).toString(16).padStart(2, '0');
+  const alphaHex = Math.round(80 + Math.min(1, power) * 175).toString(16).padStart(2, '0');
+  const reactive = !!(currentLightEffects && currentLightEffects.autoMode && isRealAudioActive());
 
   for (let i = 0; i < sourceCount; i++) {
     const originX = W * ((i + 1) / (sourceCount + 1));
@@ -2821,14 +3192,17 @@ function drawLaserEffect(t, power, speed, laser) {
     if (laser.style === 'fan') {
       // chaque source ouvre/ferme son éventail en rythme, légèrement décalée entre sources
       const spread = 0.9;
-      angle = Math.PI / 2 + Math.sin((t / 900) * speed + i * 0.6) * spread;
+      const base = reactive ? vjLaserPhase * 1.35 : (t / 900) * speed;
+      angle = Math.PI / 2 + Math.sin(base + i * 0.6) * spread;
     } else if (laser.style === 'cross') {
       // une source sur deux tourne dans le sens opposé : les faisceaux se croisent
       const dir = i % 2 === 0 ? 1 : -1;
-      angle = Math.PI / 2 + Math.sin((t / 700) * speed * dir + i) * 0.9;
+      const base = reactive ? vjLaserPhase * 1.6 * dir : (t / 700) * speed * dir;
+      angle = Math.PI / 2 + Math.sin(base + i) * 0.9;
     } else {
       // balayage rotatif, chaque source déphasée pour ne pas pointer toutes pareil
-      angle = Math.PI / 2 + Math.sin((t / 1100) * speed + i * 1.4) * 1.0;
+      const base = reactive ? vjLaserPhase : (t / 1100) * speed;
+      angle = Math.PI / 2 + Math.sin(base + i * 1.4) * 1.0;
     }
 
     const x2 = originX + Math.cos(angle) * len * 0.5;
@@ -3010,13 +3384,57 @@ function drawSparksEffect(t, power, speed, sparks) {
   }
 }
 
+// Nuage de fumée : deux canons de part et d'autre de la scène, un jet qui
+// monte et se disperse en s'élargissant (comme une vraie fumée de canon CO2).
+function drawSmokeCannonEffect(t, power, speed, smoke) {
+  const rgb = hexToRgb(smoke.color || '#cfd6e6');
+  const count = smoke.count || 2;
+  const { topY: fenceTopY } = crowdBarrierBounds();
+  const baseY = fenceTopY + 6;
+  const originXs = count <= 1 ? [W / 2] : [W * 0.28, W * 0.72, W * 0.5, W * 0.14, W * 0.86].slice(0, count);
+
+  originXs.forEach((originX, oi) => {
+    const puffsPerCannon = 10;
+    for (let i = 0; i < puffsPerCannon; i++) {
+      const seed = oi * 37.1 + i * 12.7;
+      const cycleDuration = 1.6 / Math.max(0.4, speed);
+      const tau = (((t / 1000) * speed + seed) % cycleDuration) / cycleDuration; // 0..1
+      const rise = tau * (140 + power * 120);
+      const spread = tau * (30 + power * 40);
+      const wobble = Math.sin(seed + tau * 6) * spread;
+      const x = originX + wobble;
+      const y = baseY - rise;
+      const alpha = Math.max(0, (1 - tau) * 0.5 * Math.min(1.3, power));
+      if (alpha < 0.02) continue;
+      const size = 10 + tau * 34;
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
+      grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`);
+      grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // buse du canon, au sol
+    ctx.fillStyle = '#2a2438';
+    roundRect(ctx, originX - 9, baseY - 4, 18, 10, 3);
+    ctx.fill();
+  });
+}
+
 function drawFlashEffect(t) {
-  const le = currentLightEffects;
+  const le = getEffectiveLightEffects();
   if (!le || !le.flash.on) return;
-  const pulse = Math.pow(Math.max(0, Math.sin((t / 260) * le.speed)), 10);
+  const reactive = !!(currentLightEffects && currentLightEffects.autoMode && isRealAudioActive());
+  // en régie réactive, le flash est calé sur le dernier kick détecté (pic net
+  // puis retombée) plutôt que sur un sinus générique — "des flashs en même
+  // temps que les kicks".
+  const pulse = reactive
+    ? Math.max(Math.pow(Math.max(0, Math.sin((t / 260) * le.speed)), 10) * 0.3, reactiveKickFlashEnvelope(performance.now()))
+    : Math.pow(Math.max(0, Math.sin((t / 260) * le.speed)), 10);
   if (pulse < 0.02) return;
   const rgb = hexToRgb(le.flash.color);
-  ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${pulse * le.power * 0.5})`;
+  ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${Math.min(1, pulse * le.power * 0.5)})`;
   ctx.fillRect(0, 0, W, H);
 }
 
@@ -3602,8 +4020,14 @@ let audioAnalyser = null;
 let audioDataArray = null;
 let audioGraphReady = false;
 let audioBassBinCount = 1; // nombre de "cases" du spectre couvrant la zone grave/kick (~20-220 Hz)
+let audioMidBinStart = 1, audioMidBinEnd = 2; // cases couvrant la zone médium/mélodie (~300-3000 Hz)
 let realMusicEnergy = 0;   // 0..1, mis à jour en continu tant qu'un fichier joue
+let realMidEnergy = 0;     // 0..1, énergie de la zone médium (mélodie/lead), pour faire bouger les lasers
 let bassRunningAvg = 0;
+let lastKickAt = 0;        // timestamp (performance.now()) du dernier kick détecté
+let lastKickStrength = 0;  // 0..1, force du dernier kick détecté
+const KICK_THRESHOLD = 0.32;
+const KICK_DEBOUNCE_MS = 140; // évite de compter deux fois le même coup de grosse caisse
 
 function ensureAudioGraph() {
   if (audioGraphReady) return;
@@ -3617,10 +4041,13 @@ function ensureAudioGraph() {
     source.connect(audioAnalyser);
     audioAnalyser.connect(audioCtx.destination);
     // largeur d'une case du spectre = sampleRate / fftSize : on en déduit combien
-    // de cases couvrent la zone grave/kick (~20-220 Hz), quel que soit le taux
-    // d'échantillonnage réel du contexte (souvent 44100 ou 48000 Hz).
+    // de cases couvrent la zone grave/kick (~20-220 Hz) et la zone médium/mélodie
+    // (~300-3000 Hz, là où vivent la plupart des mélodies/leads), quel que soit
+    // le taux d'échantillonnage réel du contexte (souvent 44100 ou 48000 Hz).
     const binHz = audioCtx.sampleRate / audioAnalyser.fftSize;
     audioBassBinCount = Math.max(2, Math.round(220 / binHz));
+    audioMidBinStart = Math.max(audioBassBinCount, Math.round(300 / binHz));
+    audioMidBinEnd = Math.min(audioDataArray.length, Math.max(audioMidBinStart + 4, Math.round(3000 / binHz)));
     audioGraphReady = true;
   } catch (e) {
     // Web Audio indisponible : tant pis, la piste retombera sur le rythme simulé.
@@ -3630,10 +4057,13 @@ function ensureAudioGraph() {
 // Estime un niveau d'énergie 0..1 à partir du vrai son en train de jouer, avec
 // un "coup" qui ressort quand les graves dépassent nettement leur moyenne
 // récente (façon détection de kick), pour un pic net sur chaque temps plutôt
-// qu'un simple niveau sonore plat.
+// qu'un simple niveau sonore plat. Calcule aussi l'énergie de la zone médium
+// (mélodie/lead), utilisée pour faire bouger les lasers "au son de la mélodie"
+// (cf. drawLaserEffect), et repère chaque kick détecté (cf. updateReactiveAutoVJ).
 function updateRealMusicEnergy() {
   if (!audioAnalyser || localTrackPlayer.paused) {
     realMusicEnergy *= 0.9;
+    realMidEnergy *= 0.9;
     return;
   }
   audioAnalyser.getByteFrequencyData(audioDataArray);
@@ -3644,6 +4074,18 @@ function updateRealMusicEnergy() {
   const kick = Math.max(0, bass - bassRunningAvg * 1.15) * 2.4;
   const target = Math.max(bass * 0.45, Math.min(1, kick));
   realMusicEnergy += (target - realMusicEnergy) * 0.5;
+
+  let midSum = 0;
+  const midCount = Math.max(1, audioMidBinEnd - audioMidBinStart);
+  for (let i = audioMidBinStart; i < audioMidBinEnd; i++) midSum += audioDataArray[i];
+  const midTarget = Math.min(1, (midSum / midCount / 255) * 1.6);
+  realMidEnergy += (midTarget - realMidEnergy) * 0.4;
+
+  const now = performance.now();
+  if (kick > KICK_THRESHOLD && now - lastKickAt > KICK_DEBOUNCE_MS) {
+    lastKickAt = now;
+    lastKickStrength = Math.min(1, kick);
+  }
 }
 
 // Vrai que si un fichier importé est actuellement la source ET que l'analyse
@@ -3652,6 +4094,154 @@ function updateRealMusicEnergy() {
 // l'énergie à zéro tout seul, plutôt que de retomber sur le rythme simulé.
 function isRealAudioActive() {
   return !!(currentVideoState && currentVideoState.source === 'file' && audioGraphReady);
+}
+
+// --- régie automatique VRAIMENT pilotée par le son -----------------------------
+// Tant qu'un fichier importé joue et que le mode auto est actif, on calcule ici
+// localement (chaque navigateur analyse son propre son, en phase puisque la
+// lecture est synchronisée entre tous, cf. currentActualPosition) un état de
+// régie complet — quels effets sont allumés, à quelle puissance/vitesse, avec
+// quelle couleur — à la place de l'ancien tirage aléatoire du serveur toutes les
+// 2,5 à 5 secondes (cf. scheduleAutoLightsTick, désormais réservé au fallback
+// YouTube où le son réel n'est pas analysable). Ce résultat est lu par
+// getEffectiveLightEffects() pour l'affichage uniquement : il ne remplace
+// jamais l'état serveur (currentLightEffects), qui reste ce que les contrôles
+// du DJ affichent et envoient.
+const AUTO_VJ_COLORS = ['#ff5fa3', '#5ad1ff', '#ffd35a', '#4ade80', '#c084fc', '#ff8c3d', '#33e6e6', '#ff4d6d'];
+let vjState = 'calm';        // 'calm' | 'normal' | 'buildup' | 'drop'
+let vjStateSince = 0;
+let vjDropUntil = 0;
+let vjCooldownUntil = 0;     // empêche de ré-enchaîner un buildup juste après un drop
+let vjEmaShort = 0, vjEmaLong = 0;
+let vjColor = AUTO_VJ_COLORS[0];
+let vjColorKickSeen = 0;     // dernier lastKickAt pris en compte pour changer de couleur
+let vjLaserPhase = 0;
+let vjLastFrameAt = null;
+
+function pickAutoVjColor(avoid) {
+  let c = AUTO_VJ_COLORS[Math.floor(Math.random() * AUTO_VJ_COLORS.length)];
+  if (c === avoid && AUTO_VJ_COLORS.length > 1) {
+    c = AUTO_VJ_COLORS[(AUTO_VJ_COLORS.indexOf(c) + 1) % AUTO_VJ_COLORS.length];
+  }
+  return c;
+}
+
+// Calcule (et met à jour) l'état de régie réactif : à appeler une fois par
+// frame, uniquement quand le mode auto est actif et qu'un vrai son est analysé.
+function updateReactiveAutoVJ(now) {
+  vjLastFrameAt = now;
+
+  // moyennes mobiles rapide/lente de l'énergie grave : une montée nette et
+  // soutenue de la rapide au-dessus de la lente ressemble à un "build-up".
+  vjEmaShort += (realMusicEnergy - vjEmaShort) * 0.10;
+  vjEmaLong += (realMusicEnergy - vjEmaLong) * 0.01;
+
+  const sinceKick = now - lastKickAt;
+  const bigKickJustNow = sinceKick < 90 && lastKickStrength > 0.55;
+
+  if (vjState === 'drop') {
+    if (now > vjDropUntil) {
+      vjState = 'normal';
+      vjStateSince = now;
+      vjCooldownUntil = now + 4000;
+    }
+  } else if (vjState === 'buildup') {
+    if (bigKickJustNow && vjEmaShort > 0.18 && now > vjCooldownUntil) {
+      vjState = 'drop';
+      vjStateSince = now;
+      vjDropUntil = now + 2800;
+    } else if (vjEmaShort < vjEmaLong * 0.9) {
+      // la montée est retombée sans déclencher de drop : retour au calme
+      vjState = 'normal';
+      vjStateSince = now;
+    }
+  } else {
+    // 'calm' ou 'normal'
+    if (realMusicEnergy < 0.06) {
+      vjState = 'calm';
+    } else {
+      if (vjState === 'calm') { vjState = 'normal'; vjStateSince = now; }
+      if (vjEmaShort > vjEmaLong * 1.18 && vjEmaShort > 0.28 && now > vjCooldownUntil) {
+        vjState = 'buildup';
+        vjStateSince = now;
+      }
+    }
+  }
+
+  // couleur commune à tous les effets, qui change à chaque kick détecté
+  if (lastKickAt !== vjColorKickSeen && lastKickStrength > 0.2) {
+    vjColorKickSeen = lastKickAt;
+    vjColor = pickAutoVjColor(vjColor);
+  }
+
+  // le balayage des lasers avance plus vite quand la mélodie (médiums/aigus)
+  // est chargée, et ralentit dans les passages calmes — "les lasers bougent
+  // au son de la mélodie" plutôt qu'à vitesse constante.
+  vjLaserPhase += 0.0009 + realMidEnergy * 0.006;
+}
+
+// Enveloppe de flash calée sur le dernier kick détecté (pic net puis retombée
+// rapide), utilisée par drawFlashEffect à la place du sinus générique quand la
+// régie réactive est active — "des flashs en même temps que les kicks".
+function reactiveKickFlashEnvelope(now) {
+  const dt = now - lastKickAt;
+  if (dt < 0 || dt > 500) return 0;
+  return Math.exp(-dt / 110) * lastKickStrength;
+}
+
+// Construit l'état d'effets lumineux à afficher pour l'état de régie réactif
+// courant (calme/normal/build-up/drop) : c'est ici que se décide quels effets
+// sont allumés et avec quelle intensité, sans les plafonds fixes du mode
+// manuel — "pas limité sur la vitesse et l'intensité".
+function reactiveLightEffectsFor(state) {
+  const base = {
+    flash: { on: false, color: vjColor },
+    laser: { on: true, color: vjColor, count: 5, style: 'rotating' },
+    fireballs: { on: false, color: vjColor, count: 4 },
+    sparks: { on: false, color: vjColor, count: 6, intensity: 0.5 },
+    discoball: { on: true, color: vjColor },
+    smoke: { on: false, color: '#cfd6e6', count: 2 },
+    power: 0.55, speed: 1.0,
+    autoMode: true
+  };
+  if (state === 'calm') {
+    base.laser.on = false;
+    base.discoball.on = false;
+    base.power = 0.2; base.speed = 0.5;
+  } else if (state === 'buildup') {
+    base.flash.on = true;
+    base.sparks.on = true;
+    base.sparks.intensity = 0.7;
+    base.power = 0.75 + realMusicEnergy * 0.3;
+    base.speed = 1.4 + realMusicEnergy * 0.8;
+  } else if (state === 'drop') {
+    base.flash.on = true;
+    base.fireballs.on = true;
+    base.sparks.on = true;
+    base.sparks.intensity = 1;
+    base.smoke.on = true;
+    base.laser.count = 8;
+    base.laser.style = 'fan';
+    base.power = 1.15 + realMusicEnergy * 0.25; // au-delà de 1 : volontairement "en surrégime"
+    base.speed = 2.4 + realMusicEnergy * 1.1;
+  } else { // 'normal'
+    base.sparks.on = realMusicEnergy > 0.3;
+    base.fireballs.on = lastKickStrength > 0.6 && (performance.now() - lastKickAt) < 220;
+    base.power = 0.5 + realMusicEnergy * 0.5;
+    base.speed = 0.9 + realMidEnergy * 1.2;
+  }
+  return base;
+}
+
+// Point d'entrée unique pour le rendu : renvoie l'état "réel" du serveur
+// (contrôles manuels du DJ, ou fallback YouTube aléatoire) SAUF quand le mode
+// auto est actif et qu'un vrai fichier audio est analysé, où l'affichage suit
+// alors la régie réactive calculée ci-dessus.
+function getEffectiveLightEffects() {
+  if (currentLightEffects && currentLightEffects.autoMode && isRealAudioActive()) {
+    return reactiveLightEffectsFor(vjState);
+  }
+  return currentLightEffects;
 }
 </script>
 </body>
