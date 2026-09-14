@@ -35,7 +35,7 @@
   #stage { position: fixed; inset: 0; }
 
   /* --- cadre commun "mesh festival" pour tous les panneaux --- */
-  .panel, #youtube-box, #light-fx-box, #shop-box, #avatar-select-panel {
+  .panel, #dj-status-box, #youtube-box, #light-fx-box, #shop-box, #avatar-select-panel {
     background:
       linear-gradient(var(--panel-tint), var(--panel-tint)),
       var(--mesh);
@@ -45,7 +45,7 @@
     overflow: hidden;
     isolation: isolate;
   }
-  .panel::before, #youtube-box::before, #light-fx-box::before, #shop-box::before, #avatar-select-panel::before {
+  .panel::before, #dj-status-box::before, #youtube-box::before, #light-fx-box::before, #shop-box::before, #avatar-select-panel::before {
     content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
     background: repeating-linear-gradient(45deg, rgba(255,255,255,0.06) 0 2px, transparent 2px 22px);
     mix-blend-mode: overlay;
@@ -115,7 +115,13 @@
     color: var(--text); border-radius: 999px; padding: 5px 10px; font-size: 11px;
   }
   #file-track-status { margin-top: 6px; font-size: 11px; color: var(--muted); }
-  #youtube-now-playing { margin-top: 8px; font-size: 11px; color: var(--muted); }
+  #youtube-turn-msg {
+    margin-top: 8px; font-size: 11px; color: #ffb15a; background: rgba(255,177,90,0.12);
+    border: 1px solid rgba(255,177,90,0.3); border-radius: var(--radius-md); padding: 6px 8px;
+  }
+  #youtube-launch-btn:disabled, #youtube-input:disabled, #track-file-input:disabled {
+    opacity: 0.45; cursor: not-allowed;
+  }
   #youtube-player-wrap {
     margin-top: 8px; width: 100%; aspect-ratio: 16/9;
     border-radius: var(--radius-md); overflow: hidden; background: #000;
@@ -164,6 +170,43 @@
   }
   .fx-slider-row label { font-size: 12px; color: var(--muted); width: 70px; flex-shrink: 0; }
   .fx-slider-row input[type="range"] { flex: 1; accent-color: #ff2e9a; }
+
+  #dj-status-box {
+    position: fixed; left: 16px; top: 330px; z-index: 20;
+    padding: 14px 16px;
+    width: 260px;
+  }
+  #dj-status-box h2 { font-size: 13px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 10px; padding-right: 30px; }
+  #track-timing-title { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  #track-timing-bar-track {
+    width: 100%; height: 6px; border-radius: 999px; background: rgba(255,255,255,0.12);
+    overflow: hidden; border: 1px solid var(--line);
+  }
+  #track-timing-bar-fill {
+    height: 100%; width: 0%; border-radius: 999px;
+    background: linear-gradient(90deg, #ff5f7a, #ff2e9a);
+  }
+  #track-timing-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 4px; }
+  #dj-queue-title {
+    font-size: 11px; font-weight: 700; color: var(--muted); margin: 0 0 6px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  #dj-queue-list {
+    list-style: none; margin: 0 0 8px; padding: 0;
+    display: flex; flex-direction: column; gap: 4px;
+    max-height: 150px; overflow-y: auto;
+  }
+  #dj-queue-list li {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--input-bg); border: 1px solid var(--line); border-radius: var(--radius-md);
+    padding: 5px 9px; font-size: 12px;
+  }
+  #dj-queue-list li .dj-queue-pos {
+    font-weight: 800; color: #ff2e9a; width: 16px; flex-shrink: 0; text-align: center; font-size: 11px;
+  }
+  #dj-queue-list li.dj-queue-current { border-color: #ff2e9a; background: rgba(255,46,154,0.14); }
+  #dj-queue-list li.dj-queue-current .dj-queue-pos::before { content: '▶'; }
+  #dj-queue-list .dj-queue-empty { font-size: 11px; color: var(--muted); font-style: italic; padding: 4px 0; }
 
   #profile-line { font-size: 12px; color: var(--muted); margin-top: 4px; font-weight: 600; }
   #profile-coins { color: #ffd35a; font-weight: 700; }
@@ -322,6 +365,19 @@
     font-weight: 800; font-size: 14px; border-radius: 999px; padding: 13px; cursor: pointer;
     box-shadow: 0 8px 24px rgba(255, 157, 61, 0.35);
   }
+  #avatar-confirm-btn:disabled {
+    opacity: 0.45; cursor: not-allowed; box-shadow: none;
+  }
+  #epilepsy-warning {
+    text-align: left; font-size: 11.5px; line-height: 1.4; color: var(--text);
+    background: rgba(255, 90, 90, 0.12); border: 1px solid rgba(255, 90, 90, 0.4);
+    border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 12px;
+  }
+  #epilepsy-ack-row {
+    display: flex; align-items: center; gap: 7px; margin-top: 8px;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  #epilepsy-ack-row input { flex: none; }
 </style>
 </head>
 <body>
@@ -339,7 +395,14 @@
     <div id="avatar-color-row"></div>
     <input id="avatar-name-input" type="text" placeholder="Ton pseudo" maxlength="20"
       style="width:100%; box-sizing:border-box; background:var(--input-bg); border:1px solid var(--line); color:var(--text); border-radius:999px; padding:10px; font-size:13px; margin-bottom:14px; text-align:center;">
-    <button id="avatar-confirm-btn">Entrer dans la salle</button>
+    <div id="epilepsy-warning">
+      ⚠️ Ce jeu affiche des effets lumineux intenses (flashs, stroboscope, lumières qui clignotent) pouvant déclencher une crise chez les personnes photosensibles ou épileptiques.
+      <label id="epilepsy-ack-row">
+        <input type="checkbox" id="epilepsy-ack-checkbox">
+        J'ai compris et je souhaite continuer
+      </label>
+    </div>
+    <button id="avatar-confirm-btn" disabled>Entrer dans la salle</button>
   </div>
 </div>
 
@@ -365,14 +428,26 @@
     <option value="nightclub">Boîte de nuit</option>
     <option value="wheatfield">Champ de blé</option>
   </select>
-  <div id="dj-mode-row" style="display:none; margin-top:8px; gap:6px;">
+</div>
+
+<div id="dj-status-box">
+  <div class="drag-handle" title="Déplacer ce cadre">⠿</div>
+  <h2>🎚 Musique &amp; file DJ</h2>
+  <div id="track-timing-title">Aucune musique en cours.</div>
+  <div id="track-timing-bar-track"><div id="track-timing-bar-fill"></div></div>
+  <div id="track-timing-labels">
+    <span id="track-timing-elapsed">0:00</span>
+    <span id="track-timing-duration">--:--</span>
+  </div>
+  <div id="dj-mode-row" style="display:none; margin-top:10px; gap:6px;">
     <select id="dj-mode-select" style="width:100%; background:var(--input-bg); border:1px solid var(--line); color:var(--text); border-radius:var(--radius-md); padding:6px 8px; font-size:12px;">
       <option value="fixed">DJ unique (moi)</option>
       <option value="queue">File d'attente (façon plug.dj)</option>
     </select>
   </div>
-  <div id="dj-queue-box" style="display:none; margin-top:8px;">
-    <div id="dj-queue-list" style="font-size:11px; color:var(--muted); margin-bottom:6px;"></div>
+  <div id="dj-queue-box" style="display:none; margin-top:10px;">
+    <div id="dj-queue-title">File d'attente</div>
+    <ol id="dj-queue-list"></ol>
     <button id="dj-queue-btn" class="btn" style="width:100%;"></button>
   </div>
 </div>
@@ -390,7 +465,7 @@
   </div>
   <div id="file-track-status"></div>
   <div id="youtube-non-dj-msg" style="display:none; font-size:11px; color:var(--muted); margin-top:4px;">🎧 Seul le DJ actuel peut choisir la musique.</div>
-  <div id="youtube-now-playing">Aucune musique en cours.</div>
+  <div id="youtube-turn-msg" style="display:none;"></div>
   <div id="youtube-player-wrap"><div id="youtube-player"></div></div>
   <audio id="local-track-player" preload="auto" playsinline></audio>
   <div id="youtube-controls">
@@ -435,6 +510,9 @@
       <option value="rotating">Balayage rotatif</option>
       <option value="fan">Éventail</option>
       <option value="cross">Croisés</option>
+      <option value="sweep">Mur (balayage synchronisé)</option>
+      <option value="converge">Entonnoir (convergent)</option>
+      <option value="chase">Chenillard</option>
     </select>
   </div>
 
@@ -474,6 +552,18 @@
   <div class="fx-row">
     <label><input type="checkbox" id="fx-smoke-on"> Canon à fumée</label>
     <input type="color" id="fx-smoke-color" value="#cfd6e6">
+  </div>
+  <div class="fx-subrow">
+    <label>Canons</label>
+    <select id="fx-smoke-count">
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+      <option value="4" selected>4</option>
+      <option value="5">5</option>
+      <option value="6">6</option>
+      <option value="7">7</option>
+    </select>
   </div>
 
   <div class="fx-slider-row">
@@ -606,6 +696,7 @@ function makeDraggable(el, storageKey) {
   handle.addEventListener('pointercancel', endDrag);
 }
 makeDraggable(document.querySelector('.panel'), 'main');
+makeDraggable(document.getElementById('dj-status-box'), 'djstatus');
 makeDraggable(document.getElementById('youtube-box'), 'youtube');
 makeDraggable(document.getElementById('light-fx-box'), 'lightfx');
 makeDraggable(document.getElementById('shop-box'), 'shop');
@@ -632,13 +723,14 @@ let myDjId = null;
 let myCreatorId = null;
 let djMode = 'fixed';
 let djQueue = [];
+let canStartNewTrack = true; // cf. évènement 'dj-turn-state' : un DJ en file ne peut pas relancer avant de céder la main
 let currentLightEffects = {
   flash: { on: false, color: '#ff5fa3' },
   laser: { on: false, color: '#5ad1ff', count: 4, style: 'rotating' },
   fireballs: { on: false, color: '#ff7a3d', count: 2 },
   sparks: { on: false, color: '#ffd35a' },
   discoball: { on: false, color: '#ffffff' },
-  smoke: { on: false, color: '#cfd6e6', count: 2 },
+  smoke: { on: false, color: '#cfd6e6', count: 4 },
   power: 0.6, speed: 1.0,
   autoMode: false
 };
@@ -717,6 +809,12 @@ function updateAvatarTypeLabel() {
   document.getElementById('avatar-type-label').textContent = avatarTypeLabels[avatarTypes[avatarTypeIndex]];
 }
 
+// Le bouton d'entrée reste désactivé tant que l'avertissement épilepsie/
+// photosensibilité n'a pas été explicitement coché.
+document.getElementById('epilepsy-ack-checkbox').addEventListener('change', (e) => {
+  document.getElementById('avatar-confirm-btn').disabled = !e.target.checked;
+});
+
 document.getElementById('avatar-confirm-btn').addEventListener('click', () => {
   const nameInputEl = document.getElementById('avatar-name-input');
   const chosenName = nameInputEl ? nameInputEl.value.trim() : '';
@@ -789,6 +887,7 @@ socket.on('room-state', (state) => {
   myCreatorId = state.creatorId;
   djMode = state.djMode || 'fixed';
   djQueue = state.djQueue || [];
+  canStartNewTrack = state.canStartNewTrack !== false;
   if (state.lightEffects) {
     currentLightEffects = state.lightEffects;
     syncLightEffectsControls();
@@ -914,12 +1013,21 @@ socket.on('music-drop', ({ dropAt, durationMs, color, intensity }) => {
   const delay = Math.max(0, dropAt - serverNow());
   setTimeout(() => triggerStrobe(durationMs || 1400, color || '#ffffff', intensity != null ? intensity : 0.92), delay);
 });
+// Intensité et cadence volontairement limitées (cf. STROBE_PEAK_MAX / demi-
+// période ci-dessous) : un stroboscope plein écran, très lumineux et rapide
+// (plusieurs flashs par seconde) est un vrai risque pour les personnes
+// photosensibles/épileptiques — les recommandations d'accessibilité (WCAG)
+// déconseillent plus de 3 flashs par seconde pour du contenu à fort contraste.
+// On reste ici sous cette limite même si le serveur envoyait une valeur plus
+// élevée (défense en profondeur).
+const STROBE_PEAK_MAX = 0.45;
+const STROBE_HALF_PERIOD_MS = 180; // cycle complet ~360ms ⇒ moins de 3 flashs/s
 function triggerStrobe(durationMs, color, intensity) {
   const overlay = document.getElementById('strobe-overlay');
   if (!overlay) return;
   if (strobeInterval) clearInterval(strobeInterval);
   overlay.style.background = color || '#ffffff';
-  const peak = intensity != null ? intensity : 0.92;
+  const peak = Math.min(STROBE_PEAK_MAX, intensity != null ? intensity : 0.35);
   const start = performance.now();
   overlay.style.display = 'block';
   strobeInterval = setInterval(() => {
@@ -931,7 +1039,7 @@ function triggerStrobe(durationMs, color, intensity) {
       overlay.style.display = 'none';
       return;
     }
-    const on = Math.floor(elapsed / 70) % 2 === 0;
+    const on = Math.floor(elapsed / STROBE_HALF_PERIOD_MS) % 2 === 0;
     overlay.style.opacity = on ? String(peak) : '0';
   }, 35);
 }
@@ -1024,6 +1132,7 @@ function drawDiscoTiles(t) {
 }
 socket.on('dj-mode-changed', ({ mode, queue }) => { djMode = mode; djQueue = queue; renderDjModeUI(); });
 socket.on('dj-queue-changed', (queue) => { djQueue = queue; renderDjModeUI(); });
+socket.on('dj-turn-state', ({ canStartNewTrack: c }) => { canStartNewTrack = c; renderYoutubeControlsVisibility(); });
 socket.on('light-effects-changed', (le) => { currentLightEffects = le; syncLightEffectsControls(); });
 socket.on('decor-changed', (decor) => {
   currentDecor = decor;
@@ -1061,7 +1170,7 @@ function currentFxStateFromControls() {
       intensity: parseFloat(document.getElementById('fx-sparks-intensity').value)
     },
     discoball: { on: document.getElementById('fx-discoball-on').checked, color: document.getElementById('fx-discoball-color').value },
-    smoke: { on: document.getElementById('fx-smoke-on').checked, color: document.getElementById('fx-smoke-color').value, count: 2 },
+    smoke: { on: document.getElementById('fx-smoke-on').checked, color: document.getElementById('fx-smoke-color').value, count: parseInt(document.getElementById('fx-smoke-count').value, 10) },
     power: parseFloat(document.getElementById('fx-power').value),
     speed: parseFloat(document.getElementById('fx-speed').value),
     autoMode: document.getElementById('fx-auto-on').checked
@@ -1078,7 +1187,7 @@ const fxControlIds = [
   'fx-fireballs-on', 'fx-fireballs-color', 'fx-fireballs-count',
   'fx-sparks-on', 'fx-sparks-color', 'fx-sparks-count', 'fx-sparks-intensity',
   'fx-discoball-on', 'fx-discoball-color',
-  'fx-smoke-on', 'fx-smoke-color',
+  'fx-smoke-on', 'fx-smoke-color', 'fx-smoke-count',
   'fx-power', 'fx-speed'
 ];
 fxControlIds.forEach(id => {
@@ -1138,6 +1247,7 @@ function syncLightEffectsControls() {
   if (le.smoke) {
     document.getElementById('fx-smoke-on').checked = le.smoke.on;
     document.getElementById('fx-smoke-color').value = le.smoke.color;
+    document.getElementById('fx-smoke-count').value = le.smoke.count || 4;
   }
   document.getElementById('fx-power').value = le.power;
   document.getElementById('fx-speed').value = le.speed;
@@ -1166,8 +1276,26 @@ function renderDjModeUI() {
   }
   queueBox.style.display = 'block';
 
-  const names = djQueue.map(id => (players[id] && players[id].name) || '?');
-  queueList.textContent = names.length ? ('File : ' + names.join(', ')) : 'Personne en attente.';
+  queueList.innerHTML = '';
+  if (djQueue.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'dj-queue-empty';
+    empty.textContent = 'Personne en attente.';
+    queueList.appendChild(empty);
+  } else {
+    djQueue.forEach((id, i) => {
+      const li = document.createElement('li');
+      if (id === selfId) li.style.outline = '1px solid rgba(255,255,255,0.35)';
+      const pos = document.createElement('span');
+      pos.className = 'dj-queue-pos';
+      pos.textContent = String(i + 1);
+      const name = document.createElement('span');
+      name.textContent = ((players[id] && players[id].name) || '?') + (id === selfId ? ' (toi)' : '');
+      li.appendChild(pos);
+      li.appendChild(name);
+      queueList.appendChild(li);
+    });
+  }
 
   const amIDJ = selfId === myDjId;
   const amInQueue = djQueue.includes(selfId);
@@ -3153,6 +3281,7 @@ function loop(t) {
   updateAndDrawConfetti();
   drawFlashEffect(t);
   activeBubbles.forEach(positionBubble);
+  updateTrackTimingUI(t);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -3179,9 +3308,9 @@ function drawLightEffectsBackground(t) {
 // `vjLaserPhase` — qui avance plus ou moins vite selon l'énergie de la mélodie
 // (cf. updateReactiveAutoVJ) — plutôt qu'une vitesse constante liée à `t`.
 function drawLaserEffect(t, power, speed, laser) {
-  const originY = H * 0.14;
+  const originY = H * 0.045; // départ bien plus haut, façon vraie lyre montée en hauteur
   const sourceCount = laser.count || 4;
-  const len = H * 1.1;
+  const len = H * 1.15;
   const alphaHex = Math.round(80 + Math.min(1, power) * 175).toString(16).padStart(2, '0');
   const reactive = !!(currentLightEffects && currentLightEffects.autoMode && isRealAudioActive());
 
@@ -3189,6 +3318,7 @@ function drawLaserEffect(t, power, speed, laser) {
     const originX = W * ((i + 1) / (sourceCount + 1));
 
     let angle;
+    let beamAlphaMul = 1;
     if (laser.style === 'fan') {
       // chaque source ouvre/ferme son éventail en rythme, légèrement décalée entre sources
       const spread = 0.9;
@@ -3199,17 +3329,41 @@ function drawLaserEffect(t, power, speed, laser) {
       const dir = i % 2 === 0 ? 1 : -1;
       const base = reactive ? vjLaserPhase * 1.6 * dir : (t / 700) * speed * dir;
       angle = Math.PI / 2 + Math.sin(base + i) * 0.9;
+    } else if (laser.style === 'sweep') {
+      // toutes les sources balaient EN MÊME TEMPS, parallèles : effet "mur" de
+      // faisceaux qui balaie la scène d'un bloc, plutôt que déphasées entre elles.
+      const base = reactive ? vjLaserPhase * 1.1 : (t / 1300) * speed;
+      angle = Math.PI / 2 + Math.sin(base) * 0.85;
+    } else if (laser.style === 'converge') {
+      // tous les faisceaux pointent vers un même point mobile au sol : effet
+      // "entonnoir" qui s'ouvre et se referme, façon final de concert.
+      const base = reactive ? vjLaserPhase * 1.2 : (t / 1200) * speed;
+      const targetX = W / 2 + Math.sin(base) * W * 0.32;
+      const targetY = originY + len * 0.62;
+      angle = Math.atan2(targetY - originY, targetX - originX);
+    } else if (laser.style === 'chase') {
+      // une seule source (parfois deux) pleinement allumée à la fois, qui se
+      // déplace le long de la rangée façon chenillard/poursuite lumineuse.
+      const base = reactive ? vjLaserPhase * 2.2 : (t / 260) * speed;
+      const activePos = base % sourceCount;
+      let dist = Math.abs(i - activePos);
+      dist = Math.min(dist, sourceCount - dist);
+      beamAlphaMul = Math.max(0, 1 - dist * 0.85);
+      angle = Math.PI / 2 + Math.sin(i * 2.1) * 0.5; // angles fixes par source, juste la luminosité chenille
     } else {
       // balayage rotatif, chaque source déphasée pour ne pas pointer toutes pareil
       const base = reactive ? vjLaserPhase : (t / 1100) * speed;
       angle = Math.PI / 2 + Math.sin(base + i * 1.4) * 1.0;
     }
 
+    if (beamAlphaMul < 0.03) continue;
     const x2 = originX + Math.cos(angle) * len * 0.5;
     const y2 = originY + Math.sin(angle) * len * 0.5 + len * 0.35;
     const grad = ctx.createLinearGradient(originX, originY, x2, y2);
     grad.addColorStop(0, `${laser.color}${alphaHex}`);
     grad.addColorStop(1, `${laser.color}00`);
+    ctx.save();
+    ctx.globalAlpha = beamAlphaMul;
     ctx.strokeStyle = grad;
     ctx.lineWidth = 2 + power * 2.5;
     ctx.beginPath();
@@ -3222,6 +3376,7 @@ function drawLaserEffect(t, power, speed, laser) {
     ctx.beginPath();
     ctx.arc(originX, originY, 3, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
   }
 }
 
@@ -3386,29 +3541,36 @@ function drawSparksEffect(t, power, speed, sparks) {
 
 // Nuage de fumée : deux canons de part et d'autre de la scène, un jet qui
 // monte et se disperse en s'élargissant (comme une vraie fumée de canon CO2).
+// Canons à fumée : jets bien verticaux (peu d'écart latéral, cf. `spread`
+// réduit), denses et opaques (plus de bouffées par canon, alpha plus haut) —
+// façon vrai canon CO2 de scène plutôt qu'un nuage diffus.
 function drawSmokeCannonEffect(t, power, speed, smoke) {
   const rgb = hexToRgb(smoke.color || '#cfd6e6');
-  const count = smoke.count || 2;
+  const count = smoke.count || 4;
   const { topY: fenceTopY } = crowdBarrierBounds();
   const baseY = fenceTopY + 6;
-  const originXs = count <= 1 ? [W / 2] : [W * 0.28, W * 0.72, W * 0.5, W * 0.14, W * 0.86].slice(0, count);
+  const allPositions = [W * 0.5, W * 0.24, W * 0.76, W * 0.10, W * 0.90, W * 0.38, W * 0.62];
+  const originXs = count <= 1 ? [W / 2] : allPositions.slice(0, count);
 
   originXs.forEach((originX, oi) => {
-    const puffsPerCannon = 10;
+    const puffsPerCannon = 18;
     for (let i = 0; i < puffsPerCannon; i++) {
       const seed = oi * 37.1 + i * 12.7;
-      const cycleDuration = 1.6 / Math.max(0.4, speed);
+      const cycleDuration = 1.9 / Math.max(0.4, speed);
       const tau = (((t / 1000) * speed + seed) % cycleDuration) / cycleDuration; // 0..1
-      const rise = tau * (140 + power * 120);
-      const spread = tau * (30 + power * 40);
-      const wobble = Math.sin(seed + tau * 6) * spread;
+      const rise = tau * (170 + power * 150);
+      // écart latéral volontairement faible : le jet reste bien vertical,
+      // il ne fait que s'évaser très légèrement en montant.
+      const spread = tau * (10 + power * 12);
+      const wobble = Math.sin(seed + tau * 3) * spread;
       const x = originX + wobble;
       const y = baseY - rise;
-      const alpha = Math.max(0, (1 - tau) * 0.5 * Math.min(1.3, power));
+      const alpha = Math.max(0, Math.pow(1 - tau, 0.7) * 0.75 * Math.min(1.3, power));
       if (alpha < 0.02) continue;
-      const size = 10 + tau * 34;
+      const size = 16 + tau * 46;
       const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
       grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`);
+      grad.addColorStop(0.6, `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * 0.7})`);
       grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
       ctx.fillStyle = grad;
       ctx.beginPath();
@@ -3417,24 +3579,32 @@ function drawSmokeCannonEffect(t, power, speed, smoke) {
     }
     // buse du canon, au sol
     ctx.fillStyle = '#2a2438';
-    roundRect(ctx, originX - 9, baseY - 4, 18, 10, 3);
+    roundRect(ctx, originX - 10, baseY - 4, 20, 11, 3);
     ctx.fill();
   });
 }
 
+// Plafond de luminosité du flash plein écran et vitesse de clignotement bridée
+// (cf. `safeSpeed` ci-dessous), quels que soient `power`/`speed` demandés :
+// un flash plein écran très lumineux et rapide est un vrai risque pour les
+// personnes photosensibles/épileptiques, pas seulement un effet "fort". On
+// reste sous ~2,5 flashs/seconde et sous une opacité modérée dans tous les cas.
+const FLASH_ALPHA_MAX = 0.32;
+const FLASH_SAFE_SPEED_MAX = 1.6;
 function drawFlashEffect(t) {
   const le = getEffectiveLightEffects();
   if (!le || !le.flash.on) return;
   const reactive = !!(currentLightEffects && currentLightEffects.autoMode && isRealAudioActive());
+  const safeSpeed = Math.min(FLASH_SAFE_SPEED_MAX, le.speed);
   // en régie réactive, le flash est calé sur le dernier kick détecté (pic net
   // puis retombée) plutôt que sur un sinus générique — "des flashs en même
   // temps que les kicks".
   const pulse = reactive
-    ? Math.max(Math.pow(Math.max(0, Math.sin((t / 260) * le.speed)), 10) * 0.3, reactiveKickFlashEnvelope(performance.now()))
-    : Math.pow(Math.max(0, Math.sin((t / 260) * le.speed)), 10);
+    ? Math.max(Math.pow(Math.max(0, Math.sin((t / 260) * safeSpeed)), 10) * 0.3, reactiveKickFlashEnvelope(performance.now()))
+    : Math.pow(Math.max(0, Math.sin((t / 260) * safeSpeed)), 10);
   if (pulse < 0.02) return;
   const rgb = hexToRgb(le.flash.color);
-  ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${Math.min(1, pulse * le.power * 0.5)})`;
+  ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${Math.min(FLASH_ALPHA_MAX, pulse * le.power * 0.5)})`;
   ctx.fillRect(0, 0, W, H);
 }
 
@@ -3778,6 +3948,7 @@ function positionBubble(entry) {
 
 function renderYoutubeControlsVisibility() {
   const amIDJ = selfId && selfId === myDjId;
+  const blocked = amIDJ && !canStartNewTrack;
   document.getElementById('youtube-row').style.display = amIDJ ? 'flex' : 'none';
   document.getElementById('file-track-divider').style.display = amIDJ ? 'block' : 'none';
   document.getElementById('file-track-row').style.display = amIDJ ? 'flex' : 'none';
@@ -3786,6 +3957,17 @@ function renderYoutubeControlsVisibility() {
   document.getElementById('decor-select').disabled = !amIDJ;
   document.getElementById('decor-select').title = amIDJ ? '' : 'Seul le DJ actuel peut changer le décor.';
   document.getElementById('light-fx-box').style.display = amIDJ ? 'block' : 'none';
+
+  // Un DJ qui a fini son morceau ne peut pas en relancer un autre tant qu'il
+  // ne cède pas la main, sauf si la file d'attente est vide (cf. dj-turn-state).
+  document.getElementById('youtube-launch-btn').disabled = blocked;
+  document.getElementById('youtube-input').disabled = blocked;
+  document.getElementById('track-file-input').disabled = blocked;
+  const turnMsg = document.getElementById('youtube-turn-msg');
+  turnMsg.style.display = blocked ? 'block' : 'none';
+  if (blocked) {
+    turnMsg.textContent = '⏭ Ton tour est terminé : passe la main au DJ suivant (bouton dans le cadre "Musique & file DJ") avant de relancer un morceau.';
+  }
 }
 
 // --- Musique : lien YouTube, ou fichier audio/vidéo importé (MP3, MP4...) ---
@@ -3897,8 +4079,6 @@ socket.on('video-state', (cv) => applyVideoState(cv));
 // si le lecteur n'était pas encore prêt.
 function applyVideoState(cv) {
   currentVideoState = cv;
-  document.getElementById('youtube-now-playing').textContent =
-    (cv.paused ? '⏸ En pause : ' : '▶ En cours : ') + (cv.title || cv.videoId || cv.url);
   document.getElementById('yt-pause-btn').textContent = cv.paused ? '▶ Lecture' : '⏸ Pause';
 
   const isFile = cv.source === 'file';
@@ -3906,6 +4086,45 @@ function applyVideoState(cv) {
 
   if (isFile) applyFileTrackState(cv);
   else applyYoutubeState(cv);
+
+  updateTrackTimingUI(performance.now(), true);
+}
+
+// --- affichage du timing de la piste en cours (cadre "Musique & file DJ") ---
+function formatTrackTime(sec) {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return m + ':' + String(s).padStart(2, '0');
+}
+let lastTimingUIUpdate = 0;
+function updateTrackTimingUI(now, force) {
+  if (!force && now - lastTimingUIUpdate < 300) return;
+  lastTimingUIUpdate = now;
+  const titleEl = document.getElementById('track-timing-title');
+  const fillEl = document.getElementById('track-timing-bar-fill');
+  const elapsedEl = document.getElementById('track-timing-elapsed');
+  const durationEl = document.getElementById('track-timing-duration');
+  const cv = currentVideoState;
+  if (!cv) {
+    titleEl.textContent = 'Aucune musique en cours.';
+    fillEl.style.width = '0%';
+    elapsedEl.textContent = '0:00';
+    durationEl.textContent = '--:--';
+    return;
+  }
+  titleEl.textContent = (cv.paused ? '⏸ ' : '▶ ') + (cv.title || cv.videoId || cv.url || 'Musique');
+  const elapsed = Math.max(0, currentActualPosition(cv));
+  let duration = 0;
+  if (cv.source === 'file') {
+    duration = (localTrackPlayer && isFinite(localTrackPlayer.duration)) ? localTrackPlayer.duration : 0;
+  } else if (ytPlayer && ytPlayerReady && typeof ytPlayer.getDuration === 'function') {
+    try { duration = ytPlayer.getDuration() || 0; } catch (e) { duration = 0; }
+  }
+  const pct = duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0;
+  fillEl.style.width = pct + '%';
+  elapsedEl.textContent = formatTrackTime(elapsed);
+  durationEl.textContent = duration > 0 ? formatTrackTime(duration) : '--:--';
 }
 
 function applyFileTrackState(cv) {
@@ -4026,8 +4245,13 @@ let realMidEnergy = 0;     // 0..1, énergie de la zone médium (mélodie/lead),
 let bassRunningAvg = 0;
 let lastKickAt = 0;        // timestamp (performance.now()) du dernier kick détecté
 let lastKickStrength = 0;  // 0..1, force du dernier kick détecté
+let lastFlashKickAt = 0;   // dernier kick ayant effectivement déclenché un flash (cf. FLASH_MIN_INTERVAL_MS)
 const KICK_THRESHOLD = 0.32;
 const KICK_DEBOUNCE_MS = 140; // évite de compter deux fois le même coup de grosse caisse
+// Un kick sur deux (ou trois) suffit à faire vivre les lumières ; le flash
+// plein écran, lui, ne redéclenche jamais plus vite que ça — sécurité
+// photosensibilité, indépendante de la fréquence réelle des kicks détectés.
+const FLASH_MIN_INTERVAL_MS = 340; // ~2,9 flashs/s max, sous le seuil de 3/s
 
 function ensureAudioGraph() {
   if (audioGraphReady) return;
@@ -4108,6 +4332,13 @@ function isRealAudioActive() {
 // jamais l'état serveur (currentLightEffects), qui reste ce que les contrôles
 // du DJ affichent et envoient.
 const AUTO_VJ_COLORS = ['#ff5fa3', '#5ad1ff', '#ffd35a', '#4ade80', '#c084fc', '#ff8c3d', '#33e6e6', '#ff4d6d'];
+// Formats de laser tirés au sort pour le "drop" (effet fort mais varié d'un
+// drop à l'autre) et pour l'ambiance "normale" (moins spectaculaires).
+const DROP_LASER_STYLES = ['fan', 'converge', 'chase', 'cross'];
+const NORMAL_LASER_STYLES = ['rotating', 'sweep'];
+let vjDropLaserStyle = 'fan';
+let vjNormalLaserStyle = 'rotating';
+let vjNormalStyleSince = 0;
 let vjState = 'calm';        // 'calm' | 'normal' | 'buildup' | 'drop'
 let vjStateSince = 0;
 let vjDropUntil = 0;
@@ -4150,6 +4381,9 @@ function updateReactiveAutoVJ(now) {
       vjState = 'drop';
       vjStateSince = now;
       vjDropUntil = now + 2800;
+      // format de laser tiré au sort à chaque nouveau drop, pour varier — "plus
+      // de formats différents de laser" plutôt que toujours le même à chaque drop
+      vjDropLaserStyle = DROP_LASER_STYLES[Math.floor(Math.random() * DROP_LASER_STYLES.length)];
     } else if (vjEmaShort < vjEmaLong * 0.9) {
       // la montée est retombée sans déclencher de drop : retour au calme
       vjState = 'normal';
@@ -4174,17 +4408,33 @@ function updateReactiveAutoVJ(now) {
     vjColor = pickAutoVjColor(vjColor);
   }
 
+  // le flash plein écran ne redéclenche jamais plus vite que FLASH_MIN_INTERVAL_MS,
+  // même si les kicks détectés sont plus rapprochés (sécurité photosensibilité).
+  if (lastKickAt !== lastFlashKickAt && now - lastFlashKickAt >= FLASH_MIN_INTERVAL_MS) {
+    lastFlashKickAt = lastKickAt;
+  }
+
   // le balayage des lasers avance plus vite quand la mélodie (médiums/aigus)
   // est chargée, et ralentit dans les passages calmes — "les lasers bougent
   // au son de la mélodie" plutôt qu'à vitesse constante.
   vjLaserPhase += 0.0009 + realMidEnergy * 0.006;
+
+  // en dehors des drops, le format de laser change de temps en temps (pas à
+  // chaque frame) pour varier un peu sans être non plus incohérent en continu.
+  if (vjNormalStyleSince === 0) vjNormalStyleSince = now;
+  if (now - vjNormalStyleSince > 14000) {
+    vjNormalLaserStyle = NORMAL_LASER_STYLES[Math.floor(Math.random() * NORMAL_LASER_STYLES.length)];
+    vjNormalStyleSince = now;
+  }
 }
 
-// Enveloppe de flash calée sur le dernier kick détecté (pic net puis retombée
-// rapide), utilisée par drawFlashEffect à la place du sinus générique quand la
-// régie réactive est active — "des flashs en même temps que les kicks".
+// Enveloppe de flash calée sur le dernier kick ayant eu le droit de déclencher
+// un flash (cf. FLASH_MIN_INTERVAL_MS ci-dessus, pas juste le dernier kick
+// détecté) : pic net puis retombée rapide, utilisée par drawFlashEffect à la
+// place du sinus générique quand la régie réactive est active — "des flashs
+// en même temps que les kicks", sans dépasser un rythme sûr.
 function reactiveKickFlashEnvelope(now) {
-  const dt = now - lastKickAt;
+  const dt = now - lastFlashKickAt;
   if (dt < 0 || dt > 500) return 0;
   return Math.exp(-dt / 110) * lastKickStrength;
 }
@@ -4196,11 +4446,11 @@ function reactiveKickFlashEnvelope(now) {
 function reactiveLightEffectsFor(state) {
   const base = {
     flash: { on: false, color: vjColor },
-    laser: { on: true, color: vjColor, count: 5, style: 'rotating' },
+    laser: { on: true, color: vjColor, count: 5, style: vjNormalLaserStyle },
     fireballs: { on: false, color: vjColor, count: 4 },
     sparks: { on: false, color: vjColor, count: 6, intensity: 0.5 },
     discoball: { on: true, color: vjColor },
-    smoke: { on: false, color: '#cfd6e6', count: 2 },
+    smoke: { on: false, color: '#cfd6e6', count: 4 },
     power: 0.55, speed: 1.0,
     autoMode: true
   };
@@ -4221,9 +4471,13 @@ function reactiveLightEffectsFor(state) {
     base.sparks.intensity = 1;
     base.smoke.on = true;
     base.laser.count = 8;
-    base.laser.style = 'fan';
-    base.power = 1.15 + realMusicEnergy * 0.25; // au-delà de 1 : volontairement "en surrégime"
-    base.speed = 2.4 + realMusicEnergy * 1.1;
+    base.laser.style = vjDropLaserStyle;
+    // légèrement "en surrégime" (au-delà de 1) pour l'impact du drop, mais
+    // nettement moins qu'avant : le flash plein écran a de toute façon son
+    // propre plafond de sécurité (cf. FLASH_ALPHA_MAX/FLASH_SAFE_SPEED_MAX),
+    // l'essentiel de l'effet "drop" vient d'avoir plusieurs effets à la fois.
+    base.power = 0.95 + realMusicEnergy * 0.2;
+    base.speed = 2.0 + realMusicEnergy * 0.8;
   } else { // 'normal'
     base.sparks.on = realMusicEnergy > 0.3;
     base.fireballs.on = lastKickStrength > 0.6 && (performance.now() - lastKickAt) < 220;
