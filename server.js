@@ -115,9 +115,13 @@ function getOrCreateProfile(token) {
     profiles[token] = {
       xp: 0,
       coins: 0,
-      ownedItems: []
+      ownedItems: [],
+      unlockedTracks: []
     };
   }
+  // normalisation défensive : un profil sauvegardé avant l'ajout du système de
+  // musiques à débloquer n'a pas ce champ tant qu'on ne le lui a pas ajouté ici
+  if (!Array.isArray(profiles[token].unlockedTracks)) profiles[token].unlockedTracks = [];
   return profiles[token];
 }
 
@@ -129,7 +133,8 @@ function publicProfile(token) {
     level: levelForXp(p.xp),
     xpIntoLevel: p.xp % XP_PER_LEVEL,
     xpPerLevel: XP_PER_LEVEL,
-    ownedItems: p.ownedItems
+    ownedItems: p.ownedItems,
+    unlockedTracks: p.unlockedTracks
   };
 }
 
@@ -237,6 +242,91 @@ const SHOP_ITEMS = [
 const shopItemsById = new Map(SHOP_ITEMS.map(item => [item.id, item]));
 const freeAccessories = ['none', 'cap', 'hat', 'buoy', 'costume'];
 
+// --- Bibliothèque de musiques libres de droits (mode "file obligatoire") ---
+// Quand un DJ prend son tour, il choisit parmi ces morceaux plutôt que de coller
+// un lien ou d'importer un fichier. Les 3 premiers de chaque thème sont gratuits
+// dès le départ ; les suivants se débloquent avec les pièces gagnées en jouant
+// (cf. `unlock-track`). Les fichiers doivent être déposés dans
+// public/tracks/library/<genre>/<file> — servis automatiquement via le
+// middleware express.static déjà en place sur le dossier public.
+const GENRE_LABELS = { electro: 'Électro', rock: 'Rock', pop: 'Pop', rap: 'Rap / Hip-Hop' };
+const MUSIC_LIBRARY = {
+  electro: [
+    { id: 'electro-1', title: 'Energetic Party', artist: 'alex-morgan', file: 'electro-1-energetic-party.mp3', cost: 0 },
+    { id: 'electro-2', title: 'Trance Euphoria', artist: 'alex-morgan', file: 'electro-2-trance-euphoria.mp3', cost: 0 },
+    { id: 'electro-3', title: 'Melodic Techno Journey', artist: 'alex-morgan', file: 'electro-3-melodic-techno-journey.mp3', cost: 0 },
+    { id: 'electro-4', title: 'Techno Warehouse', artist: 'alex-morgan', file: 'electro-4-techno-warehouse.mp3', cost: 60 },
+    { id: 'electro-5', title: 'Future Bass', artist: 'alex-morgan', file: 'electro-5-future-bass.mp3', cost: 90 },
+    { id: 'electro-6', title: 'Tokyo Night Walk', artist: 'alex-morgan', file: 'electro-6-tokyo-night-walk.mp3', cost: 120 },
+    { id: 'electro-7', title: 'Melody so Melody', artist: 'alex-morgan', file: 'electro-7-melody-so-melody.mp3', cost: 150 }
+  ],
+  rock: [
+    { id: 'rock-1', title: 'Hype Attitude', artist: 'alex-morgan', file: 'rock-1-hype-attitude.mp3', cost: 0 },
+    { id: 'rock-2', title: 'Sport Rock', artist: 'AtlasAudio', file: 'rock-2-sport-rock.mp3', cost: 0 },
+    { id: 'rock-3', title: 'Energetic Rock', artist: 'AtlasAudio', file: 'rock-3-energetic-rock.mp3', cost: 0 },
+    { id: 'rock-4', title: 'Stylish Rock', artist: 'AtlasAudio', file: 'rock-4-stylish-rock.mp3', cost: 60 },
+    { id: 'rock-5', title: 'Rock Music', artist: 'The_Mountain', file: 'rock-5-rock-music.mp3', cost: 90 },
+    { id: 'rock-6', title: 'Punk Rock', artist: 'JonasBlakewood', file: 'rock-6-punk-rock.mp3', cost: 120 },
+    { id: 'rock-7', title: 'Upbeat', artist: 'Verclub_Music', file: 'rock-7-upbeat.mp3', cost: 150 }
+  ],
+  pop: [
+    { id: 'pop-1', title: 'Pop Music', artist: 'The_Mountain', file: 'pop-1-pop-music.mp3', cost: 0 },
+    { id: 'pop-2', title: 'Upbeat Pop', artist: 'The_Mountain', file: 'pop-2-upbeat-pop.mp3', cost: 0 },
+    { id: 'pop-3', title: 'Dance Pop Party', artist: 'JonasBlakewood', file: 'pop-3-dance-pop-party.mp3', cost: 0 },
+    { id: 'pop-4', title: 'Dance Music', artist: 'The_Mountain', file: 'pop-4-dance-music.mp3', cost: 60 },
+    { id: 'pop-5', title: 'Reel Reels Music', artist: 'Verclub_Music', file: 'pop-5-reel-reels-music.mp3', cost: 90 },
+    { id: 'pop-6', title: 'Pop Retro', artist: 'JonasBlakewood', file: 'pop-6-pop-retro.mp3', cost: 120 }
+  ],
+  rap: [
+    { id: 'rap-1', title: 'Hype | Drill Music', artist: 'kontraa', file: 'rap-1-hype-drill.mp3', cost: 0 },
+    { id: 'rap-2', title: 'Sad Soul Hip Hop', artist: 'AlexGrohl', file: 'rap-2-sad-soul-hip-hop.mp3', cost: 0 },
+    { id: 'rap-3', title: 'Hip-Hop', artist: 'The_Mountain', file: 'rap-3-hip-hop.mp3', cost: 0 },
+    { id: 'rap-4', title: 'Hip Hop Street', artist: 'The_Mountain', file: 'rap-4-hip-hop-street.mp3', cost: 60 },
+    { id: 'rap-5', title: 'Rap Instrumental', artist: 'The_Mountain', file: 'rap-5-rap-instrumental.mp3', cost: 90 },
+    { id: 'rap-6', title: 'Rap Street Cypher Bounce', artist: 'alex-morgan', file: 'rap-6-rap-street-cypher.mp3', cost: 120 },
+    { id: 'rap-7', title: 'Free Trap Beat', artist: '5XBeatz', file: 'rap-7-free-trap-beat.mp3', cost: 150 },
+    { id: 'rap-8', title: 'French Drill / Jersey', artist: 'YoshYBeats_', file: 'rap-8-french-drill-jersey.mp3', cost: 180 }
+  ]
+};
+const ALL_TRACKS_BY_ID = new Map();
+for (const genre of Object.keys(MUSIC_LIBRARY)) {
+  for (const track of MUSIC_LIBRARY[genre]) ALL_TRACKS_BY_ID.set(track.id, Object.assign({ genre }, track));
+}
+const MUSIC_LIBRARY_DIR = path.join(__dirname, 'public', 'tracks', 'library');
+// Durée (ms) laissée au DJ dont c'est le tour pour choisir un morceau avant
+// qu'un morceau débloqué au hasard soit lancé à sa place.
+const TRACK_CHOICE_MS = 15000;
+
+function isTrackUnlockedForToken(track, token) {
+  if (track.cost <= 0) return true;
+  const profile = getOrCreateProfile(token);
+  return profile.unlockedTracks.includes(track.id);
+}
+
+// Choisit un morceau au hasard parmi ceux déjà débloqués par ce DJ (ou parmi
+// tous si, par accident, aucun n'était débloqué) — utilisé quand le délai de
+// choix (TRACK_CHOICE_MS) s'écoule sans sélection.
+function pickRandomUnlockedTrack(token) {
+  const all = [...ALL_TRACKS_BY_ID.values()];
+  const unlocked = all.filter(t => isTrackUnlockedForToken(t, token));
+  const pool = unlocked.length ? unlocked : all;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function buildGenrePayloadForToken(genre, token) {
+  return {
+    id: genre,
+    label: GENRE_LABELS[genre],
+    tracks: MUSIC_LIBRARY[genre].map(t => ({
+      id: t.id,
+      title: t.title,
+      artist: t.artist,
+      cost: t.cost,
+      unlocked: isTrackUnlockedForToken(t, token)
+    }))
+  };
+}
+
 function canUseAccessory(token, accessoryId) {
   if (freeAccessories.includes(accessoryId)) return true;
   const item = shopItemsById.get(accessoryId);
@@ -264,12 +354,19 @@ function getOrCreateRoom(roomId) {
       // null quand c'est un lien YouTube ou qu'aucun morceau n'est encore chargé.
       uploadedTrackFilePath: null,
       creatorId: null,
-      djMode: 'fixed', // 'fixed' (le créateur reste DJ) ou 'queue' (file d'attente façon plug.dj)
-      djQueue: [],      // liste d'ids en attente de leur tour, en mode 'queue'
+      // 'rotation' (par défaut) : tout le monde passe DJ à tour de rôle, obligatoire,
+      // et choisit son morceau dans la bibliothèque libre de droits à chaque tour.
+      // 'fixed' : le créateur reste DJ en continu et choisit sa musique lui-même
+      // (lien YouTube ou fichier importé), comme avant — utile pour un DJ live.
+      djMode: 'rotation',
+      djQueue: [],      // en mode 'rotation' : ordre des prochains DJ (le DJ actuel n'y est pas)
+      // Choix de morceau en cours pour le DJ actuel (mode 'rotation' uniquement) :
+      // { deadlineAt, timer } tant que le délai de TRACK_CHOICE_MS court, sinon null.
+      trackChoice: null,
       // Passage DJ en cours : remis à zéro à chaque nouveau passage (cf. settleDjTurn).
       // `trackStarted` : vrai dès que ce DJ a lancé un morceau pendant son passage —
-      // sert (en mode file d'attente, avec du monde en attente) à l'empêcher d'en
-      // relancer un autre avant de céder la main (cf. djCanStartNewTrack).
+      // sert (en mode fixe, ou en file d'attente) à l'empêcher d'en relancer un
+      // autre avant de céder la main (cf. djCanStartNewTrack).
       currentDjTurn: { settled: false, trackStarted: false },
       // Case la plus basse (fraction 0..1) où placer un objet/une case disco,
       // affinée au fil des connexions par le "minY" que chaque navigateur
@@ -379,7 +476,11 @@ io.on('connection', (socket) => {
     const isFirstInRoom = Object.keys(room.players).length === 0;
     if (isFirstInRoom) {
       room.djId = socket.id; // le premier arrivant devient le DJ de la salle
-      room.creatorId = socket.id; // lui seul pourra choisir le mode DJ unique / file d'attente
+      room.creatorId = socket.id; // lui seul pourra choisir le mode DJ unique / rotation
+    } else if (room.djMode === 'rotation' && socket.id !== room.djId && !room.djQueue.includes(socket.id)) {
+      // en mode rotation, chaque nouvel arrivant rejoint automatiquement la file
+      // (obligatoire, pas d'inscription volontaire) pour avoir son tour plus tard
+      room.djQueue.push(socket.id);
     }
 
     const playerIndex = Object.keys(room.players).length;
@@ -423,10 +524,19 @@ io.on('connection', (socket) => {
       selfId: socket.id,
       token,
       profile: publicProfile(token),
-      shopCatalog: SHOP_ITEMS
+      shopCatalog: SHOP_ITEMS,
+      musicGenres: Object.keys(MUSIC_LIBRARY).map(g => buildGenrePayloadForToken(g, token)),
+      trackChoice: room.trackChoice ? { djId: room.djId, djName: (room.players[room.djId] || {}).name, deadlineAt: room.trackChoice.deadlineAt } : null
     });
 
     socket.to(currentRoomId).emit('player-joined', { id: socket.id, player: sanitizePlayerForClients(player) });
+    if (room.djMode === 'rotation' && !room.trackChoice && !room.currentVideo) {
+      // toute première connexion dans une salle neuve en mode rotation : on ouvre
+      // tout de suite la fenêtre de choix du DJ (le créateur, premier arrivant)
+      beginDjTurn(room, currentRoomId);
+    } else if (!isFirstInRoom && room.djMode === 'rotation') {
+      io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
+    }
   });
 
   socket.on('move', (pos) => {
@@ -486,55 +596,90 @@ io.on('connection', (socket) => {
     io.to(currentRoomId).emit('player-bubble-size', { id: socket.id, size: p.bubbleSize });
   });
 
-  // Le créateur de la salle choisit : DJ unique (par défaut) ou file d'attente façon plug.dj
+  // Le créateur de la salle choisit : 'rotation' (tout le monde passe DJ à tour
+  // de rôle, par défaut) ou 'fixed' (le créateur reste DJ en continu, façon DJ live).
   socket.on('set-dj-mode', (mode) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
     if (!room || socket.id !== room.creatorId) return;
-    room.djMode = mode === 'queue' ? 'queue' : 'fixed';
-    if (room.djMode === 'fixed') room.djQueue = [];
+    const wasRotation = room.djMode === 'rotation';
+    room.djMode = mode === 'fixed' ? 'fixed' : 'rotation';
+    if (room.djMode === 'fixed') {
+      room.djQueue = [];
+      if (room.trackChoice) { clearTimeout(room.trackChoice.timer); room.trackChoice = null; }
+    } else if (!wasRotation) {
+      // on vient d'activer la rotation : tout le monde sauf le DJ actuel rejoint la file
+      room.djQueue = Object.keys(room.players).filter(id => id !== room.djId);
+      if (!room.currentVideo) beginDjTurn(room, currentRoomId); // sinon on attend la fin du morceau en cours
+    }
     io.to(currentRoomId).emit('dj-mode-changed', { mode: room.djMode, queue: room.djQueue });
     emitDjTurnState(room, currentRoomId);
   });
 
-  socket.on('join-dj-queue', () => {
+  // Le DJ dont c'est le tour choisit son morceau dans la fenêtre de
+  // TRACK_CHOICE_MS ouverte par beginDjTurn (cf. évènement 'track-choices').
+  socket.on('choose-track', (trackId) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
-    if (!room || room.djMode !== 'queue') return;
-    if (socket.id === room.djId) return; // déjà DJ, pas besoin de faire la queue
-    if (!room.djQueue.includes(socket.id)) room.djQueue.push(socket.id);
-    io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
-    emitDjTurnState(room, currentRoomId);
+    if (!room || room.djMode !== 'rotation' || socket.id !== room.djId) return;
+    if (!room.trackChoice) return; // fenêtre déjà refermée (tirage au sort entre-temps)
+    const track = ALL_TRACKS_BY_ID.get(String(trackId));
+    if (!track) return;
+    const djPlayer = room.players[socket.id];
+    if (!isTrackUnlockedForToken(track, djPlayer.token)) return; // pas encore débloqué
+    startLibraryTrack(room, currentRoomId, track);
   });
 
-  socket.on('leave-dj-queue', () => {
+  // Débloque un morceau payant avec les pièces gagnées en jouant (comme la boutique).
+  socket.on('unlock-track', (trackId) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
-    if (!room) return;
-    room.djQueue = room.djQueue.filter(id => id !== socket.id);
-    io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
-    emitDjTurnState(room, currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p) return;
+    const track = ALL_TRACKS_BY_ID.get(String(trackId));
+    if (!track || track.cost <= 0) return;
+    const profile = getOrCreateProfile(p.token);
+    if (profile.unlockedTracks.includes(track.id)) return; // déjà débloqué
+    if (profile.coins < track.cost) return; // pas assez de pièces
+    profile.coins -= track.cost;
+    profile.unlockedTracks.push(track.id);
+    scheduleSaveProfiles();
+    socket.emit('profile-updated', publicProfile(p.token));
+    // si ce joueur est justement en train de choisir sa musique, on lui renvoie
+    // la liste à jour pour que le morceau tout juste débloqué apparaisse déblocable
+    if (room.trackChoice && room.djId === socket.id) {
+      socket.emit('track-choices', {
+        deadlineAt: room.trackChoice.deadlineAt,
+        genres: Object.keys(MUSIC_LIBRARY).map(g => buildGenrePayloadForToken(g, p.token))
+      });
+    }
   });
 
   // Le DJ actuel décide de passer la main tout de suite (bouton "Passer la main") :
-  // on solde d'abord son passage (notes -> XP/pièces), puis on avance la file.
+  // on solde d'abord son passage (notes -> XP/pièces), puis on avance la file et
+  // on ouvre aussitôt la fenêtre de choix du morceau pour le suivant.
   socket.on('next-dj', () => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
-    if (!room || room.djMode !== 'queue' || socket.id !== room.djId) return;
+    if (!room || room.djMode !== 'rotation' || socket.id !== room.djId) return;
     settleDjTurn(room, currentRoomId);
     advanceDjQueue(room, currentRoomId);
+    beginDjTurn(room, currentRoomId);
   });
 
   // Une vidéo vient de se terminer chez le DJ actuel : on solde son passage dans
   // tous les cas (même en mode DJ unique, où il reste DJ mais touche quand même
-  // la récompense de ce morceau), et on avance la file seulement en mode 'queue'.
+  // la récompense de ce morceau), et on avance la file + relance un choix de
+  // morceau pour le suivant seulement en mode 'rotation'.
   socket.on('video-ended', () => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
     if (!room || socket.id !== room.djId) return;
     settleDjTurn(room, currentRoomId);
-    if (room.djMode === 'queue') advanceDjQueue(room, currentRoomId);
+    if (room.djMode === 'rotation') {
+      advanceDjQueue(room, currentRoomId);
+      beginDjTurn(room, currentRoomId);
+    }
   });
 
   // Achat d'un objet de la boutique avec les pièces gagnées en jouant.
@@ -578,6 +723,7 @@ io.on('connection', (socket) => {
     if (!currentRoomId || !videoId) return;
     const room = rooms.get(currentRoomId);
     if (!room || socket.id !== room.djId) return;
+    if (room.djMode !== 'fixed') return; // en mode 'rotation', la musique vient du choix (cf. choose-track)
     if (!djCanStartNewTrack(room)) return; // doit d'abord céder la main (file d'attente non vide)
     clearRoomTrackFile(room); // on quitte un éventuel fichier importé précédent
     room.currentVideo = {
@@ -604,6 +750,7 @@ io.on('connection', (socket) => {
     if (!currentRoomId || !url) return;
     const room = rooms.get(currentRoomId);
     if (!room || socket.id !== room.djId) return;
+    if (room.djMode !== 'fixed') return; // en mode 'rotation', la musique vient du choix (cf. choose-track)
     if (!djCanStartNewTrack(room)) return; // doit d'abord céder la main (file d'attente non vide)
     const urlStr = String(url);
     // seuls les fichiers qu'on vient nous-mêmes de stocker via /upload-track
@@ -733,7 +880,13 @@ io.on('connection', (socket) => {
       // si le DJ partait, on transmet le rôle : à la file d'attente si elle existe,
       // sinon à n'importe qui d'autre encore présent
       if (room.djId === socket.id) {
-        const advanced = room.djMode === 'queue' && advanceDjQueue(room, currentRoomId);
+        // si le DJ partait en pleine sélection de musique, on annule le minuteur
+        // en cours pour éviter qu'il ne se déclenche sur un DJ qui n'existe plus
+        if (room.trackChoice) {
+          clearTimeout(room.trackChoice.timer);
+          room.trackChoice = null;
+        }
+        const advanced = room.djMode === 'rotation' && advanceDjQueue(room, currentRoomId);
         if (!advanced) {
           const remainingIds = Object.keys(room.players);
           room.djId = remainingIds.length > 0 ? remainingIds[0] : null;
@@ -743,6 +896,10 @@ io.on('connection', (socket) => {
             io.to(currentRoomId).emit('dj-changed', room.djId);
             io.to(currentRoomId).emit('player-posed', { id: room.djId, pose: 'dj_behind' });
           }
+        }
+        // en mode rotation, le nouveau DJ (s'il y en a un) doit choisir sa musique
+        if (room.djMode === 'rotation' && room.djId) {
+          beginDjTurn(room, currentRoomId);
         }
       }
 
@@ -918,12 +1075,58 @@ function settleDjTurn(room, roomId) {
 // (cf. "next-dj" ou la fin naturelle du morceau) plutôt que d'en relancer un
 // autre indéfiniment.
 function djCanStartNewTrack(room) {
-  if (room.djMode !== 'queue') return true;
-  if (room.djQueue.length === 0) return true;
-  return !room.currentDjTurn.trackStarted;
+  // En mode 'rotation', le morceau vient du choix (cf. beginDjTurn/choose-track),
+  // jamais d'un lancement manuel répété ; seul le mode 'fixed' utilise encore
+  // cette fonction, et n'a jamais eu cette restriction.
+  return true;
 }
 function emitDjTurnState(room, roomId) {
   io.to(roomId).emit('dj-turn-state', { canStartNewTrack: djCanStartNewTrack(room) });
+}
+
+// Lance le morceau choisi (ou tiré au sort) par le DJ actuel, en mode 'rotation' :
+// prépare l'état vidéo comme pour un fichier importé, avec un "top départ"
+// commun (anchorAt) pour que tout le monde parte synchronisé.
+function startLibraryTrack(room, roomId, track) {
+  if (room.trackChoice) {
+    clearTimeout(room.trackChoice.timer);
+    room.trackChoice = null;
+  }
+  clearRoomTrackFile(room); // au cas où un fichier importé (mode fixed précédent) traînait encore
+  room.currentVideo = {
+    source: 'file',
+    url: '/tracks/library/' + track.genre + '/' + track.file,
+    title: track.title + ' — ' + track.artist,
+    paused: false,
+    positionSec: 0,
+    anchorAt: Date.now() + 6000
+  };
+  room.currentDjTurn.trackStarted = true;
+  io.to(roomId).emit('video-state', room.currentVideo);
+  startRoundCountdown(room, roomId);
+  emitDjTurnState(room, roomId);
+}
+
+// Démarre le tour du DJ actuel en mode 'rotation' : ouvre la fenêtre de choix
+// de TRACK_CHOICE_MS millisecondes (panneau central côté client), et programme
+// un tirage au sort si personne n'a choisi à temps.
+function beginDjTurn(room, roomId) {
+  if (room.djMode !== 'rotation' || !room.djId) return;
+  const djPlayer = room.players[room.djId];
+  if (!djPlayer) return;
+  const deadlineAt = Date.now() + TRACK_CHOICE_MS;
+  const timer = setTimeout(() => {
+    if (rooms.get(roomId) !== room) return;
+    if (!room.trackChoice || room.trackChoice.deadlineAt !== deadlineAt) return; // déjà résolu entre-temps
+    const track = pickRandomUnlockedTrack(djPlayer.token);
+    startLibraryTrack(room, roomId, track);
+  }, TRACK_CHOICE_MS);
+  room.trackChoice = { deadlineAt, timer };
+  io.to(roomId).emit('choose-track-prompt', { djId: room.djId, djName: djPlayer.name, deadlineAt });
+  io.to(room.djId).emit('track-choices', {
+    deadlineAt,
+    genres: Object.keys(MUSIC_LIBRARY).map(g => buildGenrePayloadForToken(g, djPlayer.token))
+  });
 }
 
 // --- mini-jeu de ramassage d'objets sur la piste ---
@@ -1258,6 +1461,12 @@ function advanceDjQueue(room, roomId) {
   const nextDjId = room.djQueue.shift();
   room.djId = nextDjId;
 
+  // Rotation obligatoire : l'ancien DJ repart en fin de file pour reprendre son
+  // tour plus tard, au lieu de sortir définitivement de la file comme avant.
+  if (room.djMode === 'rotation' && previousDjId && room.players[previousDjId] && previousDjId !== nextDjId) {
+    room.djQueue.push(previousDjId);
+  }
+
   // l'ancien DJ redevient un festivalier normal, le nouveau prend sa place sur scène
   if (room.players[previousDjId]) {
     room.players[previousDjId].pose = 'idle';
@@ -1274,6 +1483,24 @@ function advanceDjQueue(room, roomId) {
   return true;
 }
 
+// Petit diagnostic au démarrage : signale les morceaux de la bibliothèque dont
+// le fichier MP3 n'a pas encore été déposé dans public/tracks/library/<genre>/,
+// pour repérer facilement ce qu'il reste à ajouter (cf. commentaire plus haut).
+function logMissingLibraryTracks() {
+  const missing = [];
+  for (const track of ALL_TRACKS_BY_ID.values()) {
+    const filePath = path.join(MUSIC_LIBRARY_DIR, track.genre, track.file);
+    if (!fs.existsSync(filePath)) missing.push(track.genre + '/' + track.file);
+  }
+  if (missing.length > 0) {
+    console.log(`⚠️  ${missing.length} morceau(x) de la bibliothèque manquant(s) dans public/tracks/library/ :`);
+    missing.forEach(m => console.log('   - ' + m));
+  } else {
+    console.log('🎵 Bibliothèque de musiques : tous les fichiers sont présents.');
+  }
+}
+
 server.listen(PORT, () => {
+  logMissingLibraryTracks();
   console.log(`Serveur prêt sur http://localhost:${PORT}`);
 });
