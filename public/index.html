@@ -495,6 +495,9 @@
     <ol id="dj-queue-list"></ol>
     <button id="dj-queue-btn" class="btn" style="width:100%;"></button>
   </div>
+  <div id="dj-floor-box" style="display:none; margin-top:10px;">
+    <button id="dj-floor-btn" class="btn" style="width:100%;"></button>
+  </div>
 </div>
 
 <div id="youtube-box">
@@ -997,6 +1000,22 @@ socket.on('player-posed', ({ id, pose }) => {
   if (id === selfId) renderPoseBar();
   if (pose === 'dj_front_cannon' && id === myDjId) fireConfetti(W / 2, H * 0.42);
 });
+// Le DJ vient de descendre sur la piste (ou d'y remonter) : met à jour sa
+// position/pose connues de tous, et, si c'est nous, débloque le déplacement
+// au clavier et resynchronise notre position locale prédite (myX/myY).
+socket.on('player-floor-changed', ({ id, onFloor, pose, x, y }) => {
+  if (!players[id]) return;
+  players[id].onFloor = onFloor;
+  if (typeof pose === 'string') players[id].pose = pose;
+  if (typeof x === 'number') players[id].x = x;
+  if (typeof y === 'number') players[id].y = y;
+  if (id === selfId) {
+    if (typeof x === 'number') myX = x;
+    if (typeof y === 'number') myY = y;
+    renderPoseBar();
+  }
+  if (id === myDjId) renderDjFloorButton();
+});
 socket.on('player-accessory', ({ id, accessory }) => { if (players[id]) players[id].accessory = accessory; });
 socket.on('player-bubble-style', ({ id, style }) => { if (players[id]) players[id].bubbleStyle = style; });
 socket.on('player-bubble-size', ({ id, size }) => { if (players[id]) players[id].bubbleSize = size; });
@@ -1357,6 +1376,7 @@ function renderDjModeUI() {
 
   renderYoutubeControlsVisibility();
   renderPoseBar();
+  renderDjFloorButton();
 
   const queueBox = document.getElementById('dj-queue-box');
   const queueBtn = document.getElementById('dj-queue-btn');
@@ -1533,9 +1553,13 @@ const poseBar = document.getElementById('poseBar');
 
 function renderPoseBar() {
   const amIDJ = selfId && selfId === myDjId;
-  const list = amIDJ ? djPoses : festivalierPoses;
-  const labels = amIDJ ? djPoseLabels : festivalierPoseLabels;
-  const currentPose = (players[selfId] && players[selfId].pose) || (amIDJ ? 'dj_behind' : 'idle');
+  // Sur scène, le DJ choisit parmi les poses aux platines ; une fois descendu
+  // sur la piste (cf. renderDjFloorButton), il danse comme un festivalier.
+  const djOnFloor = amIDJ && players[selfId] && players[selfId].onFloor;
+  const usesDjPoses = amIDJ && !djOnFloor;
+  const list = usesDjPoses ? djPoses : festivalierPoses;
+  const labels = usesDjPoses ? djPoseLabels : festivalierPoseLabels;
+  const currentPose = (players[selfId] && players[selfId].pose) || (usesDjPoses ? 'dj_behind' : 'idle');
 
   poseBar.innerHTML = '';
   list.forEach(p => {
@@ -1549,6 +1573,20 @@ function renderPoseBar() {
     });
     poseBar.appendChild(btn);
   });
+}
+
+// Bouton qui permet au DJ actuel de quitter les platines pour aller danser
+// sur la piste avec tout le monde (la musique continue de jouer), et d'y
+// remonter quand il le souhaite.
+function renderDjFloorButton() {
+  const box = document.getElementById('dj-floor-box');
+  const btn = document.getElementById('dj-floor-btn');
+  const amIDJ = selfId && selfId === myDjId;
+  if (!amIDJ) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const onFloor = !!(players[selfId] && players[selfId].onFloor);
+  btn.textContent = onFloor ? '🎚 Remonter sur scène' : '💃 Descendre sur la piste';
+  btn.onclick = () => socket.emit('dj-floor', !onFloor);
 }
 
 const freeAccessories = [
@@ -1638,7 +1676,9 @@ window.addEventListener('keyup', e => { keys[e.key] = false; });
 let myX = 0.5, myY = 0.6;
 function updateMovement() {
   if (!avatarConfirmed) return;
-  if (selfId && selfId === myDjId) return; // le DJ est fixé sur scène, il ne se déplace pas comme les festivaliers
+  // le DJ reste fixé sur scène tant qu'il n'a pas choisi de descendre sur la
+  // piste (cf. bouton "Descendre sur la piste" / évènement 'dj-floor')
+  if (selfId && selfId === myDjId && !(players[selfId] && players[selfId].onFloor)) return;
 
   // immobilisé (platine vinyle ramassée) : on ne bouge pas du tout, on danse sur place
   if (myStatusEffect && myStatusEffect.type === 'frozen') {
@@ -2772,7 +2812,7 @@ function drawPremiumAccessory(c, accessory, headY, headR) {
 }
 
 // avatar vu de dos, style détaillé (grosse tête, corps "chunky", accessoires)
-function drawPlayer(p, isMe, t) {
+function drawPlayer(p, isMe, t, isDj) {
   const cx = p.x * W, cy = p.y * H;
   const scale = isMe ? 1.05 : 0.9;
   // immobilisé par une platine vinyle : on force la pose "danse sur place",
@@ -2800,6 +2840,13 @@ function drawPlayer(p, isMe, t) {
   ctx.font = '11px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText(p.name || '', cx, cy - 78 * scale);
+
+  // petit casque au-dessus du nom : le DJ reste identifiable même descendu
+  // sur la piste, au milieu des festivaliers.
+  if (isDj) {
+    ctx.font = '13px sans-serif';
+    ctx.fillText('🎧', cx, cy - 90 * scale);
+  }
 }
 
 // Dispatche vers le bon dessin selon le type d'avatar choisi à l'entrée.
@@ -3439,8 +3486,8 @@ function loop(t) {
   drawDiscoTiles(t);
   drawRoundItems(t);
   Object.entries(players).forEach(([id, p]) => {
-    if (id === myDjId) drawDjOnStage(p, id === selfId, t);
-    else drawPlayer(p, id === selfId, t);
+    if (id === myDjId && !p.onFloor) drawDjOnStage(p, id === selfId, t);
+    else drawPlayer(p, id === selfId, t, id === myDjId);
   });
   ctx.restore();
   drawMusicPulseOverlay(beat, autoEnv);

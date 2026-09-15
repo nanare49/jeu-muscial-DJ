@@ -489,6 +489,7 @@ io.on('connection', (socket) => {
       x: 0.5,
       y: 0.6,
       pose: isFirstInRoom ? 'dj_behind' : 'idle',
+      onFloor: false, // le DJ peut quitter les platines pour se déplacer sur la piste (cf. 'dj-floor')
       accessory: 'none',
       color: colorFor(playerIndex),
       avatarType: allowedAvatarTypes.includes(requestedAvatarType) ? requestedAvatarType : 'human',
@@ -560,6 +561,24 @@ io.on('connection', (socket) => {
     if (!p) return;
     p.pose = String(pose).slice(0, 30);
     io.to(currentRoomId).emit('player-posed', { id: socket.id, pose: p.pose });
+  });
+
+  // Le DJ actuel peut quitter les platines pour se déplacer librement sur la
+  // piste, comme un festivalier, tout en restant DJ (la musique continue).
+  // Réservé au DJ actuel ; on repasse en pose "derrière les platines" en
+  // remontant sur scène, et en pose "idle" en descendant sur la piste.
+  socket.on('dj-floor', (onFloor) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    const p = room && room.players[socket.id];
+    if (!p || socket.id !== room.djId) return;
+    p.onFloor = !!onFloor;
+    p.pose = p.onFloor ? 'idle' : 'dj_behind';
+    if (p.onFloor) {
+      p.x = clamp(p.x, 0.05, 0.95);
+      p.y = clamp(p.y, room.floorMinY, 0.9);
+    }
+    io.to(currentRoomId).emit('player-floor-changed', { id: socket.id, onFloor: p.onFloor, pose: p.pose, x: p.x, y: p.y });
   });
 
   socket.on('accessory', (accessory) => {
@@ -893,8 +912,10 @@ io.on('connection', (socket) => {
           if (room.djId) {
             room.players[room.djId].bubbleSize = Math.max(room.players[room.djId].bubbleSize, 1.2);
             room.players[room.djId].pose = 'dj_behind';
+            room.players[room.djId].onFloor = false;
             io.to(currentRoomId).emit('dj-changed', room.djId);
             io.to(currentRoomId).emit('player-posed', { id: room.djId, pose: 'dj_behind' });
+            io.to(currentRoomId).emit('player-floor-changed', { id: room.djId, onFloor: false, pose: 'dj_behind' });
           }
         }
         // en mode rotation, le nouveau DJ (s'il y en a un) doit choisir sa musique
@@ -1470,12 +1491,15 @@ function advanceDjQueue(room, roomId) {
   // l'ancien DJ redevient un festivalier normal, le nouveau prend sa place sur scène
   if (room.players[previousDjId]) {
     room.players[previousDjId].pose = 'idle';
+    room.players[previousDjId].onFloor = false;
     io.to(roomId).emit('player-posed', { id: previousDjId, pose: 'idle' });
   }
   if (room.players[nextDjId]) {
     room.players[nextDjId].pose = 'dj_behind';
+    room.players[nextDjId].onFloor = false;
     room.players[nextDjId].bubbleSize = Math.max(room.players[nextDjId].bubbleSize || 1.0, 1.2);
     io.to(roomId).emit('player-posed', { id: nextDjId, pose: 'dj_behind' });
+    io.to(roomId).emit('player-floor-changed', { id: nextDjId, onFloor: false, pose: 'dj_behind' });
   }
 
   io.to(roomId).emit('dj-changed', room.djId);
