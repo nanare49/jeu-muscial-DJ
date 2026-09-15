@@ -378,6 +378,51 @@
     font-size: 12px; font-weight: 600; cursor: pointer;
   }
   #epilepsy-ack-row input { flex: none; }
+
+  /* --- panneau de choix de musique (mode rotation obligatoire) --- */
+  #track-choice-overlay {
+    position: fixed; inset: 0; z-index: 90;
+    background: rgba(8,6,12,0.92);
+    display: none; align-items: center; justify-content: center;
+  }
+  #track-choice-panel {
+    border-radius: 24px; padding: 22px 24px; width: 480px; max-width: 92vw;
+    max-height: 86vh; overflow-y: auto; text-align: center;
+  }
+  #track-choice-panel h1 { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 4px; }
+  #track-choice-panel p.sub { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+  #track-choice-timer {
+    font-size: 32px; font-weight: 800; color: #ff2e9a; margin-bottom: 12px;
+    text-shadow: 0 0 20px rgba(255,46,154,0.6);
+  }
+  #track-choice-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; justify-content: center; }
+  .track-choice-tab {
+    background: var(--input-bg); border: 1px solid var(--line); color: var(--text);
+    border-radius: 999px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer;
+  }
+  .track-choice-tab.active { background: var(--accent-grad); color: var(--accent-ink); border-color: transparent; }
+  #track-choice-list { display: flex; flex-direction: column; gap: 6px; text-align: left; }
+  .track-choice-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--input-bg); border: 1px solid var(--line); border-radius: var(--radius-md);
+    padding: 8px 12px;
+  }
+  .track-choice-item .track-choice-title { font-size: 12.5px; font-weight: 600; }
+  .track-choice-item .track-choice-artist { font-size: 11px; color: var(--muted); }
+  .track-choice-item button {
+    background: var(--accent-grad); border: none; color: var(--accent-ink);
+    font-weight: 700; font-size: 11px; border-radius: 999px; padding: 7px 13px; cursor: pointer;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .track-choice-item button.locked { background: rgba(255,255,255,0.12); color: var(--muted); }
+  .track-choice-item button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #track-choice-banner {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 30;
+    display: none;
+    background: rgba(20,14,30,0.92); border: 1px solid var(--line-strong); border-radius: 999px;
+    padding: 8px 18px; font-size: 12.5px; font-weight: 700; color: var(--text);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
 </style>
 </head>
 <body>
@@ -442,11 +487,11 @@
   <div id="dj-mode-row" style="display:none; margin-top:10px; gap:6px;">
     <select id="dj-mode-select" style="width:100%; background:var(--input-bg); border:1px solid var(--line); color:var(--text); border-radius:var(--radius-md); padding:6px 8px; font-size:12px;">
       <option value="fixed">DJ unique (moi)</option>
-      <option value="queue">File d'attente (façon plug.dj)</option>
+      <option value="rotation">Rotation obligatoire (tout le monde passe DJ)</option>
     </select>
   </div>
   <div id="dj-queue-box" style="display:none; margin-top:10px;">
-    <div id="dj-queue-title">File d'attente</div>
+    <div id="dj-queue-title">Prochains DJ</div>
     <ol id="dj-queue-list"></ol>
     <button id="dj-queue-btn" class="btn" style="width:100%;"></button>
   </div>
@@ -465,6 +510,7 @@
   </div>
   <div id="file-track-status"></div>
   <div id="youtube-non-dj-msg" style="display:none; font-size:11px; color:var(--muted); margin-top:4px;">🎧 Seul le DJ actuel peut choisir la musique.</div>
+  <div id="youtube-rotation-msg" style="display:none; font-size:11px; color:var(--muted); margin-top:4px;">🎵 En rotation, chaque DJ choisit son morceau dans la bibliothèque en début de tour (cadre au centre).</div>
   <div id="youtube-turn-msg" style="display:none;"></div>
   <div id="youtube-player-wrap"><div id="youtube-player"></div></div>
   <audio id="local-track-player" preload="auto" playsinline></audio>
@@ -608,6 +654,17 @@
 <div id="round-countdown"></div>
 <div id="strobe-overlay"></div>
 
+<div id="track-choice-overlay">
+  <div id="track-choice-panel">
+    <h1>🎵 À toi de choisir un morceau !</h1>
+    <p class="sub">Choisis avant la fin du décompte, sinon un titre débloqué sera tiré au sort.</p>
+    <div id="track-choice-timer">15s</div>
+    <div id="track-choice-tabs"></div>
+    <div id="track-choice-list"></div>
+  </div>
+</div>
+<div id="track-choice-banner"></div>
+
 <button id="shop-toggle-btn">🛍 Boutique</button>
 <div id="shop-box" style="display:none;">
   <div class="drag-handle" title="Déplacer ce cadre">⠿</div>
@@ -724,6 +781,13 @@ let myCreatorId = null;
 let djMode = 'fixed';
 let djQueue = [];
 let canStartNewTrack = true; // cf. évènement 'dj-turn-state' : un DJ en file ne peut pas relancer avant de céder la main
+// --- choix de musique en mode rotation ---
+let musicGenres = [];          // dernier catalogue reçu (côté serveur, "unlocked" est personnalisé selon mon profil)
+let trackChoiceDjId = null;    // qui est en train de choisir, ou null si personne
+let trackChoiceDjName = '';
+let trackChoiceDeadline = null; // horodatage serveur (à comparer à serverNow())
+let trackChoiceActiveGenre = 'electro';
+let trackChoiceTickTimer = null;
 let currentLightEffects = {
   flash: { on: false, color: '#ff5fa3' },
   laser: { on: false, color: '#5ad1ff', count: 4, style: 'rotating' },
@@ -888,6 +952,15 @@ socket.on('room-state', (state) => {
   djMode = state.djMode || 'fixed';
   djQueue = state.djQueue || [];
   canStartNewTrack = state.canStartNewTrack !== false;
+  if (state.musicGenres) musicGenres = state.musicGenres;
+  if (state.trackChoice) {
+    trackChoiceDjId = state.trackChoice.djId;
+    trackChoiceDjName = state.trackChoice.djName || '';
+    trackChoiceDeadline = state.trackChoice.deadlineAt;
+  } else {
+    trackChoiceDjId = null;
+    trackChoiceDeadline = null;
+  }
   if (state.lightEffects) {
     currentLightEffects = state.lightEffects;
     syncLightEffectsControls();
@@ -914,6 +987,7 @@ socket.on('room-state', (state) => {
 
   renderBubbleControlBar();
   renderDjModeUI();
+  renderTrackChoice();
 });
 socket.on('player-joined', ({ id, player }) => { players[id] = player; });
 socket.on('player-left', ({ id }) => { delete players[id]; });
@@ -936,6 +1010,7 @@ socket.on('profile-updated', (profile) => {
   renderProfileLine();
   renderShopBox();
   renderAccessoryBar();
+  if (trackChoiceDjId === selfId) renderTrackChoicePanel();
 });
 socket.on('dj-turn-result', (result) => {
   const line = document.createElement('div');
@@ -1132,6 +1207,23 @@ function drawDiscoTiles(t) {
 }
 socket.on('dj-mode-changed', ({ mode, queue }) => { djMode = mode; djQueue = queue; renderDjModeUI(); });
 socket.on('dj-queue-changed', (queue) => { djQueue = queue; renderDjModeUI(); });
+// diffusé à tout le monde dès qu'un tour de DJ démarre (mode rotation) : sert à
+// afficher la bannière "X choisit..." chez les autres joueurs
+socket.on('choose-track-prompt', ({ djId, djName, deadlineAt }) => {
+  trackChoiceDjId = djId;
+  trackChoiceDjName = djName || '';
+  trackChoiceDeadline = deadlineAt;
+  renderTrackChoice();
+});
+// envoyé uniquement au DJ dont c'est le tour (jamais diffusé, comme le token
+// de connexion) : contient le catalogue complet avec le statut déverrouillé/non
+// personnalisé selon son profil
+socket.on('track-choices', ({ deadlineAt, genres }) => {
+  musicGenres = genres || musicGenres;
+  trackChoiceDeadline = deadlineAt;
+  trackChoiceDjId = selfId;
+  renderTrackChoice();
+});
 socket.on('dj-turn-state', ({ canStartNewTrack: c }) => { canStartNewTrack = c; renderYoutubeControlsVisibility(); });
 socket.on('light-effects-changed', (le) => { currentLightEffects = le; syncLightEffectsControls(); });
 socket.on('decor-changed', (decor) => {
@@ -1270,7 +1362,7 @@ function renderDjModeUI() {
   const queueBtn = document.getElementById('dj-queue-btn');
   const queueList = document.getElementById('dj-queue-list');
 
-  if (djMode !== 'queue') {
+  if (djMode !== 'rotation') {
     queueBox.style.display = 'none';
     return;
   }
@@ -1280,7 +1372,7 @@ function renderDjModeUI() {
   if (djQueue.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'dj-queue-empty';
-    empty.textContent = 'Personne en attente.';
+    empty.textContent = 'Personne d\'autre pour le moment.';
     queueList.appendChild(empty);
   } else {
     djQueue.forEach((id, i) => {
@@ -1297,19 +1389,93 @@ function renderDjModeUI() {
     });
   }
 
+  // En rotation, tout le monde y passe obligatoirement : plus de bouton
+  // rejoindre/quitter la file, seul le DJ en cours peut céder la main plus tôt.
   const amIDJ = selfId === myDjId;
-  const amInQueue = djQueue.includes(selfId);
-
   if (amIDJ) {
+    queueBtn.style.display = 'block';
     queueBtn.textContent = '⏭ Passer la main';
     queueBtn.onclick = () => socket.emit('next-dj');
-  } else if (amInQueue) {
-    queueBtn.textContent = 'Quitter la file';
-    queueBtn.onclick = () => socket.emit('leave-dj-queue');
   } else {
-    queueBtn.textContent = '🎧 Rejoindre la file';
-    queueBtn.onclick = () => socket.emit('join-dj-queue');
+    queueBtn.style.display = 'none';
   }
+}
+
+// --- panneau/bannière de choix de musique (mode rotation) ---
+function closeTrackChoiceUI() {
+  trackChoiceDjId = null;
+  trackChoiceDeadline = null;
+  document.getElementById('track-choice-overlay').style.display = 'none';
+  document.getElementById('track-choice-banner').style.display = 'none';
+  if (trackChoiceTickTimer) { clearInterval(trackChoiceTickTimer); trackChoiceTickTimer = null; }
+}
+
+function renderTrackChoice() {
+  const overlay = document.getElementById('track-choice-overlay');
+  const banner = document.getElementById('track-choice-banner');
+  if (!trackChoiceDjId || !trackChoiceDeadline) {
+    overlay.style.display = 'none';
+    banner.style.display = 'none';
+    if (trackChoiceTickTimer) { clearInterval(trackChoiceTickTimer); trackChoiceTickTimer = null; }
+    return;
+  }
+  const amPicking = trackChoiceDjId === selfId;
+  overlay.style.display = amPicking ? 'flex' : 'none';
+  banner.style.display = amPicking ? 'none' : 'block';
+  if (amPicking) renderTrackChoicePanel();
+  if (!trackChoiceTickTimer) trackChoiceTickTimer = setInterval(tickTrackChoiceTimer, 250);
+  tickTrackChoiceTimer();
+}
+
+function tickTrackChoiceTimer() {
+  if (!trackChoiceDeadline) return;
+  const secLeft = Math.max(0, Math.ceil((trackChoiceDeadline - serverNow()) / 1000));
+  const timerEl = document.getElementById('track-choice-timer');
+  if (timerEl) timerEl.textContent = secLeft + 's';
+  const banner = document.getElementById('track-choice-banner');
+  if (banner.style.display === 'block' && trackChoiceDjId !== selfId) {
+    const djName = (players[trackChoiceDjId] && players[trackChoiceDjId].name) || trackChoiceDjName || '?';
+    banner.textContent = '🎧 ' + djName + ' choisit un morceau... (' + secLeft + 's)';
+  }
+}
+
+function renderTrackChoicePanel() {
+  const tabsEl = document.getElementById('track-choice-tabs');
+  const listEl = document.getElementById('track-choice-list');
+  if (!musicGenres.length) { tabsEl.innerHTML = ''; listEl.innerHTML = ''; return; }
+  if (!musicGenres.find(g => g.id === trackChoiceActiveGenre)) {
+    trackChoiceActiveGenre = musicGenres[0].id;
+  }
+  tabsEl.innerHTML = '';
+  musicGenres.forEach(genre => {
+    const tab = document.createElement('div');
+    tab.className = 'track-choice-tab' + (genre.id === trackChoiceActiveGenre ? ' active' : '');
+    tab.textContent = genre.label;
+    tab.onclick = () => { trackChoiceActiveGenre = genre.id; renderTrackChoicePanel(); };
+    tabsEl.appendChild(tab);
+  });
+  const activeGenre = musicGenres.find(g => g.id === trackChoiceActiveGenre) || musicGenres[0];
+  listEl.innerHTML = '';
+  activeGenre.tracks.forEach(track => {
+    const row = document.createElement('div');
+    row.className = 'track-choice-item';
+    const info = document.createElement('div');
+    info.innerHTML = '<div class="track-choice-title">' + escapeHtml(track.title) + '</div>'
+      + '<div class="track-choice-artist">' + escapeHtml(track.artist) + '</div>';
+    const btn = document.createElement('button');
+    if (track.unlocked) {
+      btn.textContent = '▶ Choisir';
+      btn.onclick = () => socket.emit('choose-track', track.id);
+    } else {
+      btn.className = 'locked';
+      btn.textContent = '🔓 ' + track.cost + ' 🪙';
+      btn.disabled = myProfile.coins < track.cost;
+      btn.onclick = () => socket.emit('unlock-track', track.id);
+    }
+    row.appendChild(info);
+    row.appendChild(btn);
+    listEl.appendChild(row);
+  });
 }
 
 // --- panneau adapté au rôle : curseur de taille pour le DJ, décor de bulle pour les autres ---
@@ -3948,11 +4114,13 @@ function positionBubble(entry) {
 
 function renderYoutubeControlsVisibility() {
   const amIDJ = selfId && selfId === myDjId;
+  const manualMode = djMode !== 'rotation'; // en rotation, la musique vient uniquement de la bibliothèque (cf. choose-track)
   const blocked = amIDJ && !canStartNewTrack;
-  document.getElementById('youtube-row').style.display = amIDJ ? 'flex' : 'none';
-  document.getElementById('file-track-divider').style.display = amIDJ ? 'block' : 'none';
-  document.getElementById('file-track-row').style.display = amIDJ ? 'flex' : 'none';
-  document.getElementById('youtube-non-dj-msg').style.display = amIDJ ? 'none' : 'block';
+  document.getElementById('youtube-row').style.display = (amIDJ && manualMode) ? 'flex' : 'none';
+  document.getElementById('file-track-divider').style.display = (amIDJ && manualMode) ? 'block' : 'none';
+  document.getElementById('file-track-row').style.display = (amIDJ && manualMode) ? 'flex' : 'none';
+  document.getElementById('youtube-non-dj-msg').style.display = (!amIDJ && manualMode) ? 'block' : 'none';
+  document.getElementById('youtube-rotation-msg').style.display = manualMode ? 'none' : 'block';
   document.getElementById('youtube-controls').style.display = amIDJ ? 'flex' : 'none';
   document.getElementById('decor-select').disabled = !amIDJ;
   document.getElementById('decor-select').title = amIDJ ? '' : 'Seul le DJ actuel peut changer le décor.';
@@ -3960,12 +4128,14 @@ function renderYoutubeControlsVisibility() {
 
   // Un DJ qui a fini son morceau ne peut pas en relancer un autre tant qu'il
   // ne cède pas la main, sauf si la file d'attente est vide (cf. dj-turn-state).
+  // Ne concerne que le mode 'fixed' hérité : en rotation, le morceau vient du
+  // choix (cf. choose-track), donc ce blocage manuel ne s'applique pas.
   document.getElementById('youtube-launch-btn').disabled = blocked;
   document.getElementById('youtube-input').disabled = blocked;
   document.getElementById('track-file-input').disabled = blocked;
   const turnMsg = document.getElementById('youtube-turn-msg');
-  turnMsg.style.display = blocked ? 'block' : 'none';
-  if (blocked) {
+  turnMsg.style.display = (blocked && manualMode) ? 'block' : 'none';
+  if (blocked && manualMode) {
     turnMsg.textContent = '⏭ Ton tour est terminé : passe la main au DJ suivant (bouton dans le cadre "Musique & file DJ") avant de relancer un morceau.';
   }
 }
@@ -4078,6 +4248,7 @@ socket.on('video-state', (cv) => applyVideoState(cv));
 // au moment de l'exécution (jamais figé à l'avance), ce qui évite les décalages
 // si le lecteur n'était pas encore prêt.
 function applyVideoState(cv) {
+  closeTrackChoiceUI(); // le morceau démarre : le panneau/bannière de choix n'a plus lieu d'être
   currentVideoState = cv;
   document.getElementById('yt-pause-btn').textContent = cv.paused ? '▶ Lecture' : '⏸ Pause';
 
