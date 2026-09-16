@@ -330,6 +330,25 @@ function cleanupRoomIfEmpty(roomId) {
 const allowedAvatarTypes = ['human', 'robot', 'alien', 'ghost', 'dragon', 'blob'];
 const allowedAvatarColors = ['#ff5fa3', '#5ad1ff', '#ffd35a'];
 
+// Personnalisation modulaire du festivalier (humain uniquement) : juste des index
+// dans des listes fixes côté client (coiffure/visage, couleur du haut, longueur de
+// manche, couleur du pantalon, teint de peau) — aucune conséquence sur le jeu,
+// donc on se contente de les ramener dans des bornes sûres (0..9).
+function sanitizeHumanCustom(input) {
+  const clamp = (v) => {
+    const n = Number.isInteger(v) ? v : 0;
+    return Math.min(9, Math.max(0, n));
+  };
+  const src = input && typeof input === 'object' ? input : {};
+  return {
+    hairIndex: clamp(src.hairIndex),
+    shirtIndex: clamp(src.shirtIndex),
+    sleeveIndex: clamp(src.sleeveIndex),
+    pantsIndex: clamp(src.pantsIndex),
+    skinIndex: clamp(src.skinIndex)
+  };
+}
+
 // Le token d'un joueur donne accès à son profil (XP/pièces/objets) : il ne doit
 // JAMAIS être envoyé aux autres clients, seulement gardé côté serveur et renvoyé
 // au joueur concerné lui-même (dans room-state, une seule fois, à sa connexion).
@@ -354,6 +373,7 @@ io.on('connection', (socket) => {
     const requestedRoomId = typeof payload === 'string' ? payload : (payload && payload.roomId);
     const requestedAvatarType = payload && typeof payload === 'object' ? payload.avatarType : null;
     const requestedAvatarColor = payload && typeof payload === 'object' ? payload.avatarColor : null;
+    const requestedHumanCustom = payload && typeof payload === 'object' ? payload.humanCustom : null;
     const requestedName = payload && typeof payload === 'object' ? String(payload.name || '').trim().slice(0, 20) : '';
     const requestedToken = payload && typeof payload === 'object' ? payload.token : null;
     // Le token identifie le profil persistant (XP/pièces/objets) de ce navigateur.
@@ -392,6 +412,7 @@ io.on('connection', (socket) => {
       color: colorFor(playerIndex),
       avatarType: allowedAvatarTypes.includes(requestedAvatarType) ? requestedAvatarType : 'human',
       avatarColor: allowedAvatarColors.includes(requestedAvatarColor) ? requestedAvatarColor : allowedAvatarColors[0],
+      humanCustom: sanitizeHumanCustom(requestedHumanCustom),
       bubbleStyle: 'plain',       // décor de bulle choisi (festivaliers uniquement)
       bubbleSize: isFirstInRoom ? 1.2 : 1.0, // taille de bulle (réglable par le DJ seulement)
       // pièces déjà en poche à l'arrivée (ou au début du round) : le malus "perte de
