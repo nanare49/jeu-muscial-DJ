@@ -347,15 +347,29 @@
   }
   #avatar-select-panel h1 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 4px; }
   #avatar-select-panel p.sub { font-size: 12px; color: var(--muted); margin: 0 0 16px; }
-  #avatar-nav { display: flex; align-items: center; justify-content: center; gap: 12px; }
+  #avatar-type-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px; }
+  #avatar-nav { position: relative; width: 180px; margin: 0 auto; display: flex; align-items: center; justify-content: center; }
   #avatar-preview-canvas { background: rgba(6,4,14,0.6); border-radius: var(--radius-md); border: 1px solid var(--line); }
   .avatar-arrow {
     background: rgba(255,255,255,0.08); border: 1px solid var(--line-strong); color: var(--text);
     width: 36px; height: 36px; border-radius: 50%; font-size: 16px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   }
-  #avatar-type-label { font-size: 13px; font-weight: 600; color: var(--text); margin: 10px 0 14px; }
-  #avatar-color-row { display: flex; gap: 10px; justify-content: center; margin-bottom: 18px; }
+  #avatar-type-label { font-size: 13px; font-weight: 600; color: var(--text); min-width: 90px; text-align: center; }
+  #human-zone-controls { position: absolute; inset: 0; pointer-events: none; }
+  .zone-cluster { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: auto; }
+  .zone-cluster .zone-label {
+    font-size: 8.5px; font-weight: 800; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.03em; background: rgba(8,6,12,0.7); padding: 1px 5px; border-radius: 999px;
+  }
+  .zone-cluster .zone-row { display: flex; gap: 3px; }
+  .zone-arrow {
+    background: rgba(255,255,255,0.1); border: 1px solid var(--line-strong); color: var(--text);
+    width: 19px; height: 19px; border-radius: 50%; font-size: 9px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #avatar-color-row-label { font-size: 10.5px; font-weight: 700; color: var(--muted); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+  #avatar-color-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 18px; }
   .avatar-color-swatch {
     width: 30px; height: 30px; border-radius: 10px; cursor: pointer; border: 3px solid transparent;
   }
@@ -385,13 +399,34 @@
 <div id="avatar-select-overlay">
   <div id="avatar-select-panel">
     <h1>Choisis ton avatar</h1>
-    <p class="sub">Utilise les flèches pour changer de personnage, et choisis sa couleur.</p>
-    <div id="avatar-nav">
+    <p class="sub" id="avatar-select-sub">Utilise les flèches pour changer de personnage. Pour le festivalier, des flèches près de chaque zone changent tête/corps/bras/jambes séparément.</p>
+    <div id="avatar-type-row">
       <div class="avatar-arrow" id="avatar-prev-btn">◀</div>
-      <canvas id="avatar-preview-canvas" width="180" height="220"></canvas>
+      <div id="avatar-type-label">Festivalier</div>
       <div class="avatar-arrow" id="avatar-next-btn">▶</div>
     </div>
-    <div id="avatar-type-label">Festivalier</div>
+    <div id="avatar-nav">
+      <canvas id="avatar-preview-canvas" width="180" height="220"></canvas>
+      <div id="human-zone-controls">
+        <div class="zone-cluster" id="zone-head" style="left:-40px; top:10%;">
+          <div class="zone-label">Tête</div>
+          <div class="zone-row"><div class="zone-arrow" id="zone-head-prev">◀</div><div class="zone-arrow" id="zone-head-next">▶</div></div>
+        </div>
+        <div class="zone-cluster" id="zone-arms" style="left:-40px; top:54%;">
+          <div class="zone-label">Bras</div>
+          <div class="zone-row"><div class="zone-arrow" id="zone-arms-prev">◀</div><div class="zone-arrow" id="zone-arms-next">▶</div></div>
+        </div>
+        <div class="zone-cluster" id="zone-body" style="right:-40px; top:30%;">
+          <div class="zone-label">Corps</div>
+          <div class="zone-row"><div class="zone-arrow" id="zone-body-prev">◀</div><div class="zone-arrow" id="zone-body-next">▶</div></div>
+        </div>
+        <div class="zone-cluster" id="zone-legs" style="right:-40px; top:76%;">
+          <div class="zone-label">Jambes</div>
+          <div class="zone-row"><div class="zone-arrow" id="zone-legs-prev">◀</div><div class="zone-arrow" id="zone-legs-next">▶</div></div>
+        </div>
+      </div>
+    </div>
+    <div id="avatar-color-row-label">Couleur</div>
     <div id="avatar-color-row"></div>
     <input id="avatar-name-input" type="text" placeholder="Ton pseudo" maxlength="20"
       style="width:100%; box-sizing:border-box; background:var(--input-bg); border:1px solid var(--line); color:var(--text); border-radius:999px; padding:10px; font-size:13px; margin-bottom:14px; text-align:center;">
@@ -746,6 +781,76 @@ const avatarColorChoices = ['#ff5fa3', '#5ad1ff', '#ffd35a'];
 let avatarTypeIndex = 0;
 let avatarColorIndex = 0;
 
+// --- personnalisation modulaire du festivalier (humain) : tête / corps / bras / jambes ---
+// Sprites Kenney "Modular Characters" (CC0), triés à la main pour ne garder que ceux
+// qui s'assemblent proprement (cf. public/avatars/human/license.txt).
+const HUMAN_SPRITE_BASE = '/avatars/human/';
+const HUMAN_HAIR_OPTIONS = [
+  { hair: 'tete1.png', face: 'face1.png' },
+  { hair: 'tete2.png', face: 'face2.png' },
+  { hair: 'tete3.png', face: 'face3.png' },
+  { hair: 'tete4.png', face: 'face4.png' },
+  { hair: 'tete5.png', face: 'face1.png' },
+  { hair: 'tete6.png', face: 'face2.png' },
+  { hair: 'tete7.png', face: 'face3.png' },
+  { hair: 'tete8.png', face: 'face4.png' },
+  { hair: 'tete9.png', face: 'face1.png' },
+  { hair: 'tete10.png', face: 'face2.png' }
+];
+const HUMAN_SHIRT_COLORS = [
+  { key: 'blue', hex: '#3498db' }, { key: 'green', hex: '#63b448' },
+  { key: 'grey', hex: '#95a5a6' }, { key: 'navy', hex: '#34495e' },
+  { key: 'pine', hex: '#16a085' }, { key: 'red', hex: '#e05848' },
+  { key: 'white', hex: '#eeeeee' }, { key: 'yellow', hex: '#ffcc00' }
+];
+const HUMAN_SLEEVE_OPTIONS = [
+  { key: 'long', label: 'Manches longues', frac: 1.0 },
+  { key: 'short', label: 'Manches courtes', frac: 0.55 },
+  { key: 'shorter', label: 'Débardeur', frac: 0.12 }
+];
+const HUMAN_PANTS_COLORS = [
+  { key: 'blue1', hex: '#699fb6' }, { key: 'blue2', hex: '#2a81bb' },
+  { key: 'brown', hex: '#c4ad83' }, { key: 'green', hex: '#529c39' },
+  { key: 'grey', hex: '#7b8f91' }, { key: 'lightblue', hex: '#57afaf' },
+  { key: 'navy', hex: '#2a3c4f' }, { key: 'pine', hex: '#108a72' },
+  { key: 'red', hex: '#bf493b' }, { key: 'tan', hex: '#c2b7a3' },
+  { key: 'white', hex: '#d2d2d2' }, { key: 'yellow', hex: '#e7b900' }
+];
+const HUMAN_SKIN_TINTS = [
+  { key: 'tint1', hex: '#ffe0b1' }, { key: 'tint2', hex: '#f5d29d' },
+  { key: 'tint3', hex: '#ffe9c9' }, { key: 'tint4', hex: '#e0bc85' },
+  { key: 'tint5', hex: '#d2ac73' }, { key: 'tint6', hex: '#bf9c66' },
+  { key: 'tint7', hex: '#aa8956' }, { key: 'tint8', hex: '#957544' }
+];
+let humanCustom = { hairIndex: 0, shirtIndex: 0, sleeveIndex: 0, pantsIndex: 0, skinIndex: 0 };
+function clampIndex(i, len) { return ((Number.isInteger(i) ? i : 0) % len + len) % len; }
+
+// cache d'images pour les sprites (chargées à la demande, réutilisées ensuite)
+const _spriteImgCache = {};
+function getSpriteImage(relPath) {
+  let img = _spriteImgCache[relPath];
+  if (!img) {
+    img = new Image();
+    img.src = HUMAN_SPRITE_BASE + relPath;
+    _spriteImgCache[relPath] = img;
+  }
+  return img;
+}
+function drawSpriteSafe(c, img, x, y, w, h) {
+  if (img.complete && img.naturalWidth > 0) c.drawImage(img, x, y, w, h);
+}
+function drawSpriteMirrored(c, img, x, y, w, h) {
+  if (!(img.complete && img.naturalWidth > 0)) return;
+  c.save();
+  c.translate(x + w, y);
+  c.scale(-1, 1);
+  c.drawImage(img, 0, 0, w, h);
+  c.restore();
+}
+function spriteDims(img, fallback) {
+  return (img.naturalWidth > 0) ? [img.naturalWidth, img.naturalHeight] : fallback;
+}
+
 // on relit les derniers choix faits sur ce navigateur, s'il y en a
 let savedAvatarPrefs = null;
 try {
@@ -757,6 +862,15 @@ if (savedAvatarPrefs) {
   }
   if (Number.isInteger(savedAvatarPrefs.colorIndex) && avatarColorChoices[savedAvatarPrefs.colorIndex]) {
     avatarColorIndex = savedAvatarPrefs.colorIndex;
+  }
+  if (savedAvatarPrefs.human && typeof savedAvatarPrefs.human === 'object') {
+    humanCustom = {
+      hairIndex: clampIndex(savedAvatarPrefs.human.hairIndex, HUMAN_HAIR_OPTIONS.length),
+      shirtIndex: clampIndex(savedAvatarPrefs.human.shirtIndex, HUMAN_SHIRT_COLORS.length),
+      sleeveIndex: clampIndex(savedAvatarPrefs.human.sleeveIndex, HUMAN_SLEEVE_OPTIONS.length),
+      pantsIndex: clampIndex(savedAvatarPrefs.human.pantsIndex, HUMAN_PANTS_COLORS.length),
+      skinIndex: clampIndex(savedAvatarPrefs.human.skinIndex, HUMAN_SKIN_TINTS.length)
+    };
   }
 }
 
@@ -780,17 +894,30 @@ const avatarPreviewCanvas = document.getElementById('avatar-preview-canvas');
 const avatarPreviewCtx = avatarPreviewCanvas.getContext('2d');
 
 const colorRow = document.getElementById('avatar-color-row');
-avatarColorChoices.forEach((color, i) => {
-  const sw = document.createElement('div');
-  sw.className = 'avatar-color-swatch' + (i === avatarColorIndex ? ' selected' : '');
-  sw.style.background = color;
-  sw.addEventListener('click', () => {
-    avatarColorIndex = i;
-    colorRow.querySelectorAll('.avatar-color-swatch').forEach(s => s.classList.remove('selected'));
-    sw.classList.add('selected');
+// Sur le festivalier (humain), cette rangée sert à choisir le TEINT DE PEAU
+// (les autres couleurs sont maintenant réparties sur les flèches tête/corps/jambes).
+// Sur les autres types, elle garde son ancien rôle de couleur générale.
+function renderColorRow() {
+  colorRow.innerHTML = '';
+  const isHuman = avatarTypes[avatarTypeIndex] === 'human';
+  const labelEl = document.getElementById('avatar-color-row-label');
+  if (labelEl) labelEl.textContent = isHuman ? 'Teint de peau' : 'Couleur';
+  const list = isHuman ? HUMAN_SKIN_TINTS : avatarColorChoices.map(c => ({ hex: c }));
+  const selectedI = isHuman ? humanCustom.skinIndex : avatarColorIndex;
+  list.forEach((item, i) => {
+    const sw = document.createElement('div');
+    sw.className = 'avatar-color-swatch' + (i === selectedI ? ' selected' : '');
+    sw.style.background = item.hex;
+    sw.title = isHuman ? 'Teint de peau' : '';
+    sw.addEventListener('click', () => {
+      if (isHuman) { humanCustom.skinIndex = i; } else { avatarColorIndex = i; }
+      colorRow.querySelectorAll('.avatar-color-swatch').forEach(s => s.classList.remove('selected'));
+      sw.classList.add('selected');
+    });
+    colorRow.appendChild(sw);
   });
-  colorRow.appendChild(sw);
-});
+}
+renderColorRow();
 
 if (savedAvatarPrefs && savedAvatarPrefs.name) {
   document.getElementById('avatar-name-input').value = savedAvatarPrefs.name;
@@ -807,7 +934,23 @@ document.getElementById('avatar-next-btn').addEventListener('click', () => {
 });
 function updateAvatarTypeLabel() {
   document.getElementById('avatar-type-label').textContent = avatarTypeLabels[avatarTypes[avatarTypeIndex]];
+  const isHuman = avatarTypes[avatarTypeIndex] === 'human';
+  document.getElementById('human-zone-controls').style.display = isHuman ? '' : 'none';
+  renderColorRow();
 }
+
+// --- flèches proches de chaque zone (tête / corps / bras / jambes), humain uniquement ---
+function stepHuman(field, listLen, dir) {
+  humanCustom[field] = clampIndex(humanCustom[field] + dir, listLen);
+}
+document.getElementById('zone-head-prev').addEventListener('click', () => stepHuman('hairIndex', HUMAN_HAIR_OPTIONS.length, -1));
+document.getElementById('zone-head-next').addEventListener('click', () => stepHuman('hairIndex', HUMAN_HAIR_OPTIONS.length, 1));
+document.getElementById('zone-body-prev').addEventListener('click', () => stepHuman('shirtIndex', HUMAN_SHIRT_COLORS.length, -1));
+document.getElementById('zone-body-next').addEventListener('click', () => stepHuman('shirtIndex', HUMAN_SHIRT_COLORS.length, 1));
+document.getElementById('zone-arms-prev').addEventListener('click', () => stepHuman('sleeveIndex', HUMAN_SLEEVE_OPTIONS.length, -1));
+document.getElementById('zone-arms-next').addEventListener('click', () => stepHuman('sleeveIndex', HUMAN_SLEEVE_OPTIONS.length, 1));
+document.getElementById('zone-legs-prev').addEventListener('click', () => stepHuman('pantsIndex', HUMAN_PANTS_COLORS.length, -1));
+document.getElementById('zone-legs-next').addEventListener('click', () => stepHuman('pantsIndex', HUMAN_PANTS_COLORS.length, 1));
 
 // Le bouton d'entrée reste désactivé tant que l'avertissement épilepsie/
 // photosensibilité n'a pas été explicitement coché.
@@ -828,7 +971,8 @@ document.getElementById('avatar-confirm-btn').addEventListener('click', () => {
     localStorage.setItem('jeuMusicalAvatarPrefs', JSON.stringify({
       typeIndex: avatarTypeIndex,
       colorIndex: avatarColorIndex,
-      name: chosenName
+      name: chosenName,
+      human: humanCustom
     }));
   } catch (e) { /* stockage indisponible : pas grave, juste moins pratique */ }
 
@@ -836,6 +980,7 @@ document.getElementById('avatar-confirm-btn').addEventListener('click', () => {
     roomId: requestedRoom,
     avatarType: avatarTypes[avatarTypeIndex],
     avatarColor: avatarColorChoices[avatarColorIndex],
+    humanCustom: humanCustom,
     name: chosenName,
     token: myPlayerToken,
     // jusqu'où la piste descend sur CET écran (juste sous la barrière) : sert au
@@ -850,7 +995,7 @@ function avatarPreviewLoop(t) {
   drawAvatarByType(
     avatarPreviewCtx, 90, 170, 2.1,
     avatarTypes[avatarTypeIndex], 'idle', 'none',
-    avatarColorChoices[avatarColorIndex], false, t, previewMotionState
+    avatarColorChoices[avatarColorIndex], false, t, previewMotionState, humanCustom
   );
   requestAnimationFrame(avatarPreviewLoop);
 }
@@ -2616,7 +2761,7 @@ function drawPlayer(p, isMe, t) {
   const color = p.avatarColor || p.color || '#8d84a3';
   if (!p._motion) p._motion = {};
 
-  drawAvatarByType(ctx, cx, cy, scale, p.avatarType || 'human', move, accessory, color, isMe, t, p._motion);
+  drawAvatarByType(ctx, cx, cy, scale, p.avatarType || 'human', move, accessory, color, isMe, t, p._motion, p.humanCustom);
 
   // petit badge au-dessus de la tête pour l'effet bonus/malus en cours (le
   // même que l'icône de l'objet ramassé), visible par tout le monde.
@@ -2638,7 +2783,7 @@ function drawPlayer(p, isMe, t) {
 
 // Dispatche vers le bon dessin selon le type d'avatar choisi à l'entrée.
 // Utilisé à la fois par le rendu du jeu et par l'aperçu de l'écran de sélection.
-function drawAvatarByType(c, cx, cy, scale, avatarType, move, accessory, color, isMe, t, motionState) {
+function drawAvatarByType(c, cx, cy, scale, avatarType, move, accessory, color, isMe, t, motionState, humanCustomData) {
   c.save();
   c.translate(cx, cy);
   c.scale(scale, scale);
@@ -2649,7 +2794,7 @@ function drawAvatarByType(c, cx, cy, scale, avatarType, move, accessory, color, 
   else if (avatarType === 'ghost') drawGhostBody(c, move, accessory, color, isMe, t, ms);
   else if (avatarType === 'dragon') drawDragonBody(c, move, accessory, color, isMe, t, ms);
   else if (avatarType === 'blob') drawBlobBody(c, move, accessory, color, isMe, t, ms);
-  else drawHumanBody(c, move, accessory, color, isMe, t, ms);
+  else drawHumanBody(c, move, accessory, color, isMe, t, ms, humanCustomData);
 
   c.restore();
 }
@@ -2684,57 +2829,95 @@ function drawSelfRing(c, isMe, cy, r) {
   c.stroke();
 }
 
-// --- avatar "Festivalier" (humain, vu de dos) ---
-function drawHumanBody(c, move, accessory, color, isMe, t, motionState) {
+// deux segments de couleurs différentes pour un même membre (manche + avant-bras nu)
+function drawLimbTubeSleeve(c, x1, y1, x2, y2, width, sleeveColor, skinColor, sleeveFrac) {
+  if (sleeveFrac >= 0.98) { drawLimbTube(c, x1, y1, x2, y2, width, sleeveColor); return; }
+  const mx = x1 + (x2 - x1) * sleeveFrac, my = y1 + (y2 - y1) * sleeveFrac;
+  drawLimbTube(c, x1, y1, x2, y2, width * 0.86, skinColor);
+  drawLimbTube(c, x1, y1, mx, my, width, sleeveColor);
+}
+
+// --- avatar "Festivalier" (humain), personnalisable : tête/corps/bras/jambes ---
+// tête = coiffure+visage (10 choix), corps = couleur du haut (8), bras = longueur
+// de manche (3, même couleur que le haut), jambes = couleur du pantalon (12),
+// + teint de peau (8) choisi séparément. Sprites Kenney en pièces détachées,
+// composés ici dans le même repère que l'ancien dessin procédural pour ne rien
+// casser côté animation (secousse, saut, danse...).
+function drawHumanBody(c, move, accessory, color, isMe, t, motionState, custom) {
   const { armAngle, armLift, bob, sway, legSpread } = smoothMotion(motionState || {}, motionFor(move, t), t);
   c.translate(sway, -bob);
   drawShadow(c, sway, bob);
 
-  const pantsColor = '#2a2438';
-  c.fillStyle = pantsColor;
-  c.beginPath();
-  traceRoundRect(c, -13, 16, 10, 20, 4);
-  traceRoundRect(c, 3, 16, 10, 20, 4);
-  c.fill();
-  strokeOutline(c, pantsColor, 2.2);
-  // ceinture, pour distinguer le pantalon du bas du blouson
-  c.fillStyle = shadeColor(pantsColor, -18);
-  c.fillRect(-13, 15, 10, 3.5);
-  c.fillRect(3, 15, 10, 3.5);
-  c.fillStyle = '#1c1626';
-  c.beginPath();
-  traceRoundRect(c, -14, 33, 12, 7, 3);
-  traceRoundRect(c, 2, 33, 12, 7, 3);
-  c.fill();
-  strokeOutline(c, '#1c1626', 2.2);
+  const cu = custom || {};
+  const hairOpt = HUMAN_HAIR_OPTIONS[clampIndex(cu.hairIndex, HUMAN_HAIR_OPTIONS.length)];
+  const shirtOpt = HUMAN_SHIRT_COLORS[clampIndex(cu.shirtIndex, HUMAN_SHIRT_COLORS.length)];
+  const sleeveOpt = HUMAN_SLEEVE_OPTIONS[clampIndex(cu.sleeveIndex, HUMAN_SLEEVE_OPTIONS.length)];
+  const pantsOpt = HUMAN_PANTS_COLORS[clampIndex(cu.pantsIndex, HUMAN_PANTS_COLORS.length)];
+  const skinOpt = HUMAN_SKIN_TINTS[clampIndex(cu.skinIndex, HUMAN_SKIN_TINTS.length)];
 
-  // bras (membres en volume, dessinés avant le torse pour passer dessous à l'épaule)
+  const headImg = getSpriteImage('skin/' + skinOpt.key + '/head.png');
+  const neckImg = getSpriteImage('skin/' + skinOpt.key + '/neck.png');
+  const hairImg = getSpriteImage('hair/' + hairOpt.hair);
+  const faceImg = getSpriteImage('face/' + hairOpt.face);
+  const shirtImg = getSpriteImage('shirts/' + shirtOpt.key + '/shirt.png');
+  const waistImg = getSpriteImage('pants/' + pantsOpt.key + '/waist.png');
+  const legImg = getSpriteImage('pants/' + pantsOpt.key + '/leg_long.png');
+  const shoeImg = getSpriteImage('shoes/default.png');
+
+  // repère "sprite" (pixels natifs Kenney) -> repère du jeu : un seul facteur
+  // d'échelle S, dérivé de la taille du torse (34x38 dans le jeu = 153x174 en sprite).
+  const S = 0.22, CX = 210, Y_TORSO_TOP = 130;
+  const [shw, shh] = spriteDims(shirtImg, [153, 174]);
+  const Y_HIP = Y_TORSO_TOP + shh - 14;
+  const LEG_GAP = 6;
+  const [lw, lh] = spriteDims(legImg, [111, 166]);
+  const [sw2, sh2] = spriteDims(shoeImg, [94, 42]);
+  const [ww, wh] = spriteDims(waistImg, [153, 47]);
+  const [nw, nh] = spriteDims(neckImg, [96, 37]);
+  const rightLegX = CX + LEG_GAP / 2, leftLegX = CX - LEG_GAP / 2 - lw;
+  const shoeY = Y_HIP + lh - sh2 * 0.5;
+
+  // --- bas du corps : jambes, chaussures, ceinture, cou (sous les bras/le haut) ---
+  c.save();
+  c.translate(-CX * S, -Y_TORSO_TOP * S - 18);
+  c.scale(S, S);
+  drawSpriteSafe(c, legImg, rightLegX, Y_HIP, lw, lh);
+  drawSpriteMirrored(c, legImg, leftLegX, Y_HIP, lw, lh);
+  drawSpriteSafe(c, shoeImg, rightLegX + lw * 0.10, shoeY, sw2, sh2);
+  drawSpriteMirrored(c, shoeImg, leftLegX + lw * 0.90 - sw2, shoeY, sw2, sh2);
+  drawSpriteSafe(c, waistImg, CX - ww / 2, Y_HIP - wh * 0.65, ww, wh);
+  drawSpriteSafe(c, neckImg, CX - nw / 2, Y_TORSO_TOP - nh * 0.55, nw, nh);
+  c.restore();
+
+  // --- bras (tube coloré, dessinés avant le haut pour passer dessous à l'épaule) ---
   const shoulderY = -10, armLen = 24;
-  const angle = armAngle + (Math.PI / 2 + 0.2 - armAngle) * armLift;
+  // Au repos, bras le long du corps plutôt que tendus sur le côté : avec l'ancien
+  // rendu abstrait (juste un tube fin) la pose "en croix" passait inaperçue, mais à
+  // côté d'un corps illustré détaillé elle fait "épouvantail". Seule la pose idle est
+  // retouchée ; saut/danse/applaudir gardent leur animation d'origine intacte.
+  const restArmAngle = (move === 'idle') ? -1.4 : armAngle;
+  const angle = restArmAngle + (Math.PI / 2 + 0.2 - restArmAngle) * armLift;
   const lx = -16 - Math.cos(angle) * armLen, ly = shoulderY - Math.sin(angle) * armLen;
   let rx = 16 + Math.cos(angle) * armLen, ry = shoulderY - Math.sin(angle) * armLen;
   if (move === 'clap') { rx = lx + 6; ry = ly; }
-  drawLimbTube(c, -16, shoulderY, lx, ly, 11, color);
-  drawLimbTube(c, 16, shoulderY, rx, ry, 11, color);
+  const skinTone = skinOpt.hex;
+  // petit "capuchon" d'épaule (couleur du haut) pour que la manche parte proprement
+  // du torse au lieu de commencer par une ligne fine dans le vide
+  c.fillStyle = shirtOpt.hex;
+  c.beginPath();
+  c.arc(-16, shoulderY, 8, 0, Math.PI * 2);
+  c.arc(16, shoulderY, 8, 0, Math.PI * 2);
+  c.fill();
+  strokeOutline(c, shirtOpt.hex, 2);
+  drawLimbTubeSleeve(c, -16, shoulderY, lx, ly, 14, shirtOpt.hex, skinTone, sleeveOpt.frac);
+  drawLimbTubeSleeve(c, 16, shoulderY, rx, ry, 14, shirtOpt.hex, skinTone, sleeveOpt.frac);
 
-  // blouson : dégradé pour le volume + col/fermeture d'une teinte contrastée
-  // pour un vêtement bien distinct plutôt qu'un aplat uni
-  c.fillStyle = linearBodyGradient(c, -17, -18, 34, 38, color);
-  roundRect(c, -17, -18, 34, 38, 12);
-  c.fill();
-  strokeOutline(c, color, 2.6);
-  const innerTone = shadeColor(color, -34);
-  c.fillStyle = innerTone;
-  c.beginPath();
-  c.moveTo(-6, -18); c.lineTo(6, -18); c.lineTo(3, 4); c.lineTo(-3, 4); c.closePath();
-  c.fill();
-  strokeOutline(c, innerTone, 1.6);
-  c.strokeStyle = shadeColor(color, -46);
-  c.lineWidth = 1.4;
-  c.beginPath();
-  c.moveTo(0, -17); c.lineTo(0, 3);
-  c.stroke();
-  drawFlatHighlight(c, -6, -8, 8, 13, 0.14);
+  // --- haut (sprite, recouvre la base des bras à l'épaule) ---
+  c.save();
+  c.translate(-CX * S, -Y_TORSO_TOP * S - 18);
+  c.scale(S, S);
+  drawSpriteSafe(c, shirtImg, CX - shw / 2, Y_TORSO_TOP, shw, shh);
+  c.restore();
 
   if (accessory === 'costume') {
     c.strokeStyle = '#ff5fa3';
@@ -2756,38 +2939,28 @@ function drawHumanBody(c, move, accessory, color, isMe, t, motionState) {
     c.stroke();
   }
 
-  const skinTone = '#f0cca3';
+  // mains (rondes, teint de peau choisi) à l'extrémité des bras
   c.fillStyle = skinTone;
   c.beginPath();
-  c.arc(lx, ly, 6.5, 0, Math.PI * 2);
-  c.arc(rx, ry, 6.5, 0, Math.PI * 2);
+  c.arc(lx, ly, 7.5, 0, Math.PI * 2);
+  c.arc(rx, ry, 7.5, 0, Math.PI * 2);
   c.fill();
   strokeOutline(c, skinTone, 2);
 
-  c.fillStyle = skinTone;
-  c.beginPath();
-  c.arc(0, -32, 17, 0, Math.PI * 2);
-  c.fill();
-  strokeOutline(c, skinTone, 2.6);
-  c.fillStyle = '#241c30';
-  c.beginPath();
-  c.arc(0, -34, 17.6, Math.PI * 0.02, Math.PI * 0.98);
-  c.closePath();
-  c.fill();
-  strokeOutline(c, '#241c30', 2.2);
-  c.fillStyle = skinTone;
-  c.beginPath();
-  c.arc(-16, -28, 3.2, 0, Math.PI * 2);
-  c.arc(16, -28, 3.2, 0, Math.PI * 2);
-  c.fill();
-  strokeOutline(c, skinTone, 1.6);
-
-  // visage minimal, façon illustration plate
-  c.fillStyle = '#2a2136';
-  c.beginPath();
-  c.arc(-6, -32, 1.8, 0, Math.PI * 2);
-  c.arc(6, -32, 1.8, 0, Math.PI * 2);
-  c.fill();
+  // --- tête : peau + visage + coiffure (par-dessus mains/haut) ---
+  c.save();
+  c.translate(-CX * S, -Y_TORSO_TOP * S - 18);
+  c.scale(S, S);
+  const [hdw, hdh] = spriteDims(headImg, [173, 168]);
+  const neckTopY = Y_TORSO_TOP - nh * 0.55;
+  const headBottomY = neckTopY + nh * 0.4;
+  const headTopY = headBottomY - hdh;
+  drawSpriteSafe(c, headImg, CX - hdw / 2, headTopY, hdw, hdh);
+  const [fw, fh] = spriteDims(faceImg, [100, 101]);
+  drawSpriteSafe(c, faceImg, CX - fw / 2, headTopY + hdh * 0.40, fw, fh);
+  const [hrw, hrh] = spriteDims(hairImg, [150, 120]);
+  drawSpriteSafe(c, hairImg, CX - hrw / 2, headTopY - hrh * 0.12, hrw, hrh);
+  c.restore();
 
   if (accessory === 'cap') {
     c.fillStyle = '#2f9e6b';
