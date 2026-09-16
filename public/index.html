@@ -801,7 +801,13 @@ const HUMAN_SHIRT_COLORS = [
   { key: 'blue', hex: '#3498db' }, { key: 'green', hex: '#63b448' },
   { key: 'grey', hex: '#95a5a6' }, { key: 'navy', hex: '#34495e' },
   { key: 'pine', hex: '#16a085' }, { key: 'red', hex: '#e05848' },
-  { key: 'white', hex: '#eeeeee' }, { key: 'yellow', hex: '#ffcc00' }
+  { key: 'white', hex: '#eeeeee' }, { key: 'yellow', hex: '#ffcc00' },
+  // t-shirts "à motif" (même sprite blanc, juste un dessin différent dessus)
+  { key: 'white', hex: '#eeeeee', icon: '🎵' },
+  { key: 'white', hex: '#eeeeee', icon: '🍔' },
+  { key: 'white', hex: '#eeeeee', icon: '⚡' },
+  { key: 'white', hex: '#eeeeee', icon: '🎮' },
+  { key: 'white', hex: '#eeeeee', icon: 'DJ' }
 ];
 const HUMAN_SLEEVE_OPTIONS = [
   { key: 'long', label: 'Manches longues', frac: 1.0 },
@@ -1500,21 +1506,16 @@ function renderBubbleControlBar() {
 // --- poses et accessoires ---
 const festivalierPoses = ['idle', 'hands_up', 'jump', 'clap', 'dance1', 'dance2'];
 const festivalierPoseLabels = { idle: 'Repos', hands_up: 'Mains en l\u2019air', jump: 'Saute', clap: 'Applaudit', dance1: 'Danse 1', dance2: 'Danse 2' };
-const djPoses = ['dj_behind', 'dj_behind_hands', 'dj_on_deck', 'dj_front_dance', 'dj_front_cannon'];
-const djPoseLabels = {
-  dj_behind: 'Derrière les platines',
-  dj_behind_hands: 'Mains en l\u2019air',
-  dj_on_deck: 'Sur les platines',
-  dj_front_dance: 'Devant, danse',
-  dj_front_cannon: 'Canon à cotillons !'
-};
+// Le DJ n'est plus fige sur une estrade avec des poses dediees ("derriere les
+// platines"...) : il est sur la piste comme tout le monde et partage les memes
+// poses/animations.
 const poseBar = document.getElementById('poseBar');
 
 function renderPoseBar() {
-  const amIDJ = selfId && selfId === myDjId;
-  const list = amIDJ ? djPoses : festivalierPoses;
-  const labels = amIDJ ? djPoseLabels : festivalierPoseLabels;
-  const currentPose = (players[selfId] && players[selfId].pose) || (amIDJ ? 'dj_behind' : 'idle');
+  const list = festivalierPoses;
+  const labels = festivalierPoseLabels;
+  const currentPose = (players[selfId] && players[selfId].pose) || 'idle';
+
 
   poseBar.innerHTML = '';
   list.forEach(p => {
@@ -1617,7 +1618,6 @@ window.addEventListener('keyup', e => { keys[e.key] = false; });
 let myX = 0.5, myY = 0.6;
 function updateMovement() {
   if (!avatarConfirmed) return;
-  if (selfId && selfId === myDjId) return; // le DJ est fixé sur scène, il ne se déplace pas comme les festivaliers
 
   // immobilisé (platine vinyle ramassée) : on ne bouge pas du tout, on danse sur place
   if (myStatusEffect && myStatusEffect.type === 'frozen') {
@@ -2891,21 +2891,32 @@ function drawHumanBody(c, move, accessory, color, isMe, t, motionState, custom) 
 
   // --- bras (tube coloré, dessinés avant le haut pour passer dessous à l'épaule) ---
   const shoulderY = -10, armLen = 24;
-  // Au repos, bras le long du corps plutôt que tendus sur le côté : avec l'ancien
-  // rendu abstrait (juste un tube fin) la pose "en croix" passait inaperçue, mais à
-  // côté d'un corps illustré détaillé elle fait "épouvantail". Seule la pose idle est
-  // retouchée ; saut/danse/applaudir gardent leur animation d'origine intacte.
-  const restArmAngle = (move === 'idle') ? -1.4 : armAngle;
-  const angle = restArmAngle + (Math.PI / 2 + 0.2 - restArmAngle) * armLift;
-  const lx = -16 - Math.cos(angle) * armLen, ly = shoulderY - Math.sin(angle) * armLen;
-  let rx = 16 + Math.cos(angle) * armLen, ry = shoulderY - Math.sin(angle) * armLen;
+  let lx, ly, rx, ry;
+  if (move === 'idle') {
+    // Au repos, bras qui pendent bien droit le long du corps (même x que
+    // l'épaule, pas d'écartement) : le tube reste alors caché sous le haut sur
+    // toute sa hauteur et seule la main dépasse en bas — plus de "trait" visible
+    // en travers du ventre comme avec un angle en diagonale.
+    lx = -16; rx = 16; ly = ry = shoulderY + 34;
+  } else {
+    // les autres poses (saut, danse, applaudir...) gardent leur animation d'origine
+    const angle = armAngle + (Math.PI / 2 + 0.2 - armAngle) * armLift;
+    lx = -16 - Math.cos(angle) * armLen; ly = shoulderY - Math.sin(angle) * armLen;
+    rx = 16 + Math.cos(angle) * armLen; ry = shoulderY - Math.sin(angle) * armLen;
+  }
   if (move === 'clap') { rx = lx + 6; ry = ly; }
   const skinTone = skinOpt.hex;
   // petit "capuchon" d'épaule (couleur du haut) pour que la manche parte proprement
   // du torse au lieu de commencer par une ligne fine dans le vide
   c.fillStyle = shirtOpt.hex;
+  // chaque cercle dans son propre sous-chemin (beginPath séparé) : sinon
+  // canvas relie les deux arcs par une ligne droite avant de remplir/contourner,
+  // ce qui créait un trait visible entre les deux épaules.
   c.beginPath();
   c.arc(-16, shoulderY, 8, 0, Math.PI * 2);
+  c.fill();
+  strokeOutline(c, shirtOpt.hex, 2);
+  c.beginPath();
   c.arc(16, shoulderY, 8, 0, Math.PI * 2);
   c.fill();
   strokeOutline(c, shirtOpt.hex, 2);
@@ -2918,6 +2929,22 @@ function drawHumanBody(c, move, accessory, color, isMe, t, motionState, custom) 
   c.scale(S, S);
   drawSpriteSafe(c, shirtImg, CX - shw / 2, Y_TORSO_TOP, shw, shh);
   c.restore();
+
+  // motif imprimé sur le haut (note de musique, burger, éclair, manette, "DJ"...)
+  if (shirtOpt.icon) {
+    c.save();
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    if (shirtOpt.icon === 'DJ') {
+      c.font = 'bold 11px sans-serif';
+      c.fillStyle = '#241c30';
+      c.fillText('DJ', 0, 2);
+    } else {
+      c.font = '13px sans-serif';
+      c.fillText(shirtOpt.icon, 0, 2);
+    }
+    c.restore();
+  }
 
   if (accessory === 'costume') {
     c.strokeStyle = '#ff5fa3';
@@ -2939,10 +2966,17 @@ function drawHumanBody(c, move, accessory, color, isMe, t, motionState, custom) 
     c.stroke();
   }
 
-  // mains (rondes, teint de peau choisi) à l'extrémité des bras
+  // mains (rondes, teint de peau choisi) à l'extrémité des bras.
+  // Chaque main dans son propre sous-chemin (beginPath séparé avant chaque
+  // arc) : sinon canvas relie automatiquement la fin du premier cercle au
+  // début du second par une ligne droite avant remplissage/contour, ce qui
+  // produisait le trait visible entre les deux mains.
   c.fillStyle = skinTone;
   c.beginPath();
   c.arc(lx, ly, 7.5, 0, Math.PI * 2);
+  c.fill();
+  strokeOutline(c, skinTone, 2);
+  c.beginPath();
   c.arc(rx, ry, 7.5, 0, Math.PI * 2);
   c.fill();
   strokeOutline(c, skinTone, 2);
@@ -3445,9 +3479,11 @@ function loop(t) {
   drawLightEffectsBackground(t);
   drawDiscoTiles(t);
   drawRoundItems(t);
+  // Le DJ n'est plus figé sur une estrade avec une illustration à part : qu'on
+  // soit DJ ou invité, on est sur la piste, avec le même personnage animé, et on
+  // peut se déplacer normalement (cf. updateMovement).
   Object.entries(players).forEach(([id, p]) => {
-    if (id === myDjId) drawDjOnStage(p, id === selfId, t);
-    else drawPlayer(p, id === selfId, t);
+    drawPlayer(p, id === selfId, t);
   });
   ctx.restore();
   drawMusicPulseOverlay(beat, autoEnv);
