@@ -1733,6 +1733,7 @@ function drawBackground(t, pulseEnv) {
   drawDjBigScreen(t, pulseEnv || 0);
 
   drawStagePlatform(theme);
+  drawStageDeckProp(theme);
   drawCrowdBarrier();
 }
 
@@ -1810,7 +1811,7 @@ function drawDjBigScreen(t, pulseEnv) {
   ctx.fillRect(x, y, width, height);
 
   drawScreenTunnel(t, x, y, width, height, tint, pulseEnv);
-  drawScreenAlien(t, cx, y + height * 0.62, height * 0.9, tint, pulseEnv);
+  drawScreenOctopus(t, cx, y + height * 0.62, height * 0.9, tint, pulseEnv);
 
   // scanlines discrètes façon écran LED
   ctx.fillStyle = 'rgba(0,0,0,0.12)';
@@ -1850,105 +1851,187 @@ function drawScreenTunnel(t, x, y, width, height, tint, pulseEnv) {
   ctx.restore();
 }
 
-// Personnage alien stylisé (tête et yeux immenses, silhouette fine), rendu
-// avec des dégradés pour donner un effet de volume/3D, une lueur de contour
-// reprenant la couleur de l'effet lumineux actif, et une petite animation de
-// danse (balancement, bras, tête) amplifiée sur le rythme (pulseEnv).
-function drawScreenAlien(t, cx, baseY, scaleH, tint, pulseEnv) {
+// Pieuvre DJ stylisée (remplace l'ancien alien) : mante en dégradé avec
+// quelques taches pour une texture de peau moins uniforme, 8 tentacules
+// "tapered" avec ventouses qui ondulent chacune avec sa propre phase/fréquence
+// (donc dans des directions différentes, jamais toutes synchronisées), et dont
+// l'amplitude est amplifiée sur le rythme de la musique (pulseEnv, cf. loop()).
+// Grands yeux expressifs + casque DJ posé sur la tête, avec la même lueur de
+// contour reprenant la couleur de l'effet lumineux actif que l'ancien décor.
+function drawScreenOctopus(t, cx, baseY, scaleH, tint, pulseEnv) {
   const s = scaleH / 300;
   const rgb = hexToRgb(tint);
-  const sway = Math.sin(t / 900) * 10 * s;
-  const bob = Math.sin(t / 460) * 6 * s - pulseEnv * 18 * s;
-  const headTilt = Math.sin(t / 1500) * 0.12;
-  const armL = Math.sin(t / 520);
-  const armR = Math.sin(t / 520 + Math.PI * 0.8);
+  const sway = Math.sin(t / 1300) * 9 * s;
+  const bob = Math.sin(t / 700) * 6 * s - pulseEnv * 14 * s;
+  const bodyColor = '#9c3f6e';
+  const kick = 1 + pulseEnv * 1.1; // amplifie l'ondulation des tentacules sur le rythme
 
   ctx.save();
   ctx.translate(cx + sway, baseY + bob);
 
-  // faisceau lumineux au sol : le personnage semble flotter dedans
-  const beamGrad = ctx.createLinearGradient(0, -10 * s, 0, 70 * s);
-  beamGrad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.35)`);
+  // faisceau lumineux au sol : la pieuvre semble flotter dedans (même traitement que l'ancien décor)
+  const beamGrad = ctx.createLinearGradient(0, -10 * s, 0, 90 * s);
+  beamGrad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.32)`);
   beamGrad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
   ctx.fillStyle = beamGrad;
   ctx.beginPath();
-  ctx.moveTo(-30 * s, 70 * s);
-  ctx.lineTo(30 * s, 70 * s);
-  ctx.lineTo(10 * s, -10 * s);
-  ctx.lineTo(-10 * s, -10 * s);
+  ctx.moveTo(-34 * s, 90 * s);
+  ctx.lineTo(34 * s, 90 * s);
+  ctx.lineTo(12 * s, -10 * s);
+  ctx.lineTo(-12 * s, -10 * s);
   ctx.closePath();
   ctx.fill();
 
   // ombre portée douce au sol
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.beginPath();
-  ctx.ellipse(0, 68 * s, 26 * s, 7 * s, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 88 * s, 30 * s, 7 * s, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // torse
-  const torsoGrad = ctx.createLinearGradient(-16 * s, -70 * s, 16 * s, 0);
-  torsoGrad.addColorStop(0, shadeColor('#6c9b8a', 18));
-  torsoGrad.addColorStop(1, shadeColor('#3d5a4f', -10));
-  ctx.fillStyle = torsoGrad;
-  roundRect(ctx, -16 * s, -70 * s, 32 * s, 68 * s, 14 * s);
+  const mantleCY = -42 * s, mantleR = 40 * s;
+
+  // --- tentacules, dessinées avant la mante pour qu'elles semblent en sortir ---
+  function drawTentacle(angle, len, width0, phase, freqMul) {
+    const N = 9;
+    const originX = Math.cos(angle) * mantleR * 0.5;
+    const originY = mantleCY + Math.sin(angle) * mantleR * 0.5 + mantleR * 0.4;
+    const pts = [];
+    for (let i = 0; i <= N; i++) {
+      const frac = i / N;
+      const dist = len * frac;
+      const wave = Math.sin(t / (260 / freqMul) + phase + frac * 5.2) * (2 + frac * 15) * kick;
+      const curl = Math.sin(t / 1100 + phase * 1.6) * frac * 12;
+      const off = wave + curl;
+      pts.push([
+        originX + Math.cos(angle) * dist - Math.sin(angle) * off,
+        originY + Math.sin(angle) * dist + Math.cos(angle) * off
+      ]);
+    }
+    const left = [], right = [];
+    for (let i = 0; i <= N; i++) {
+      const frac = i / N;
+      const w = width0 * (1 - frac * 0.88);
+      const p0 = pts[Math.max(0, i - 1)], p1 = pts[Math.min(N, i + 1)];
+      let tx = p1[0] - p0[0], ty = p1[1] - p0[1];
+      const tl = Math.hypot(tx, ty) || 1;
+      tx /= tl; ty /= tl;
+      const nx = -ty, ny = tx;
+      left.push([pts[i][0] + nx * w / 2, pts[i][1] + ny * w / 2]);
+      right.push([pts[i][0] - nx * w / 2, pts[i][1] - ny * w / 2]);
+    }
+    ctx.beginPath();
+    ctx.moveTo(left[0][0], left[0][1]);
+    for (let i = 1; i <= N; i++) ctx.lineTo(left[i][0], left[i][1]);
+    for (let i = N; i >= 0; i--) ctx.lineTo(right[i][0], right[i][1]);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(originX, originY, pts[N][0], pts[N][1]);
+    grad.addColorStop(0, shadeColor(bodyColor, 12));
+    grad.addColorStop(1, shadeColor(bodyColor, -26));
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(bodyColor, -45);
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+    // ventouses : chaque cercle dans son propre sous-chemin (jamais deux arcs
+    // dans un même chemin sans beginPath entre eux, sinon un trait droit les relie)
+    ctx.fillStyle = shadeColor(bodyColor, 30);
+    for (let i = 1; i < N; i++) {
+      const frac = i / N;
+      if (frac > 0.9) continue;
+      const r = Math.max(0.9, width0 * 0.15 * (1 - frac * 0.75));
+      ctx.beginPath();
+      ctx.arc(pts[i][0], pts[i][1], r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // éventail sur ~290°, centré vers le bas : les tentacules partent ainsi dans
+  // des directions très différentes (bas, côtés, un peu vers le haut) plutôt
+  // que toutes vers le bas comme une simple frange.
+  const tentacleCount = 8;
+  const lens = [78, 92, 68, 100, 74, 96, 70, 88];
+  const widths = [15, 13, 16, 12, 15.5, 12.5, 16.5, 13];
+  for (let i = 0; i < tentacleCount; i++) {
+    const angle = (-55 + 290 * (i / (tentacleCount - 1))) * Math.PI / 180;
+    drawTentacle(angle, lens[i] * s, widths[i] * s, i * 1.7, 0.7 + (i % 3) * 0.25);
+  }
+
+  // --- mante (tête/corps) ---
+  const mantleGrad = ctx.createRadialGradient(-mantleR * 0.35, mantleCY - mantleR * 0.35, mantleR * 0.15, 0, mantleCY, mantleR * 1.2);
+  mantleGrad.addColorStop(0, shadeColor(bodyColor, 32));
+  mantleGrad.addColorStop(0.55, bodyColor);
+  mantleGrad.addColorStop(1, shadeColor(bodyColor, -28));
+  ctx.fillStyle = mantleGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, mantleCY, mantleR, mantleR * 1.12, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // bras, ondulent en rythme et alternés (façon danse)
-  ctx.strokeStyle = shadeColor('#4a6d60', 0);
-  ctx.lineWidth = 7 * s;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(-15 * s, -55 * s);
-  ctx.quadraticCurveTo(-34 * s, -30 * s + armL * 10 * s, -26 * s, 4 * s + armL * 14 * s);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(15 * s, -55 * s);
-  ctx.quadraticCurveTo(34 * s, -30 * s + armR * 10 * s, 26 * s, 4 * s + armR * 14 * s);
-  ctx.stroke();
-
-  // cou + tête (légère inclinaison rythmée)
-  ctx.save();
-  ctx.translate(0, -70 * s);
-  ctx.rotate(headTilt);
-
-  ctx.fillStyle = shadeColor('#4a6d60', -5);
-  ctx.fillRect(-6 * s, -6 * s, 12 * s, 14 * s);
-
-  const headGrad = ctx.createRadialGradient(-14 * s, -15 * s, 4 * s, 0, 0, 46 * s);
-  headGrad.addColorStop(0, '#cfe8d8');
-  headGrad.addColorStop(0.5, '#8fb9a6');
-  headGrad.addColorStop(1, '#3d5a4f');
-  ctx.fillStyle = headGrad;
-  ctx.beginPath();
-  ctx.ellipse(0, -15 * s, 30 * s, 38 * s, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // lueur de contour de la tête, reprend la couleur de l'effet lumineux actif
-  ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.5 + pulseEnv * 0.5})`;
-  ctx.lineWidth = 2.5;
-  ctx.shadowColor = `rgba(${rgb.r},${rgb.g},${rgb.b},0.9)`;
-  ctx.shadowBlur = 14 + pulseEnv * 16;
+  // lueur de contour reprenant la couleur de l'effet lumineux actif (cohérence avec le reste de l'écran)
+  ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.45 + pulseEnv * 0.5})`;
+  ctx.lineWidth = 2.2;
+  ctx.shadowColor = `rgba(${rgb.r},${rgb.g},${rgb.b},0.85)`;
+  ctx.shadowBlur = 12 + pulseEnv * 16;
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // yeux, grands et en amande, avec une lueur colorée
+  // taches sur la mante, pour une texture de peau moins uniforme
+  const spots = [[-14, -12, 6, 3.4], [10, -20, 5, 2.8], [-4, 6, 7, 3.6], [16, 4, 4.4, 2.4], [-18, 10, 4, 2.2]];
+  ctx.fillStyle = 'rgba(0,0,0,0.14)';
+  spots.forEach(([sx, sy, srx, sry]) => {
+    ctx.beginPath();
+    ctx.ellipse(sx * s, mantleCY + sy * s, srx * s, sry * s, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // --- yeux, grands et expressifs ---
   [-1, 1].forEach(side => {
     ctx.save();
-    ctx.translate(side * 13 * s, -18 * s);
-    ctx.rotate(side * 0.28);
-    ctx.fillStyle = '#0a0a0a';
+    ctx.translate(side * 15 * s, mantleCY - 6 * s);
+    ctx.fillStyle = '#f4ede2';
     ctx.beginPath();
-    ctx.ellipse(0, 0, 12 * s, 7 * s, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, 10 * s, 11 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    strokeOutline(ctx, '#f4ede2', 1.4);
+    ctx.fillStyle = '#17121e';
+    ctx.beginPath();
+    ctx.ellipse(side * 1.5 * s, 1 * s, 5.6 * s, 6.4 * s, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.7 + pulseEnv * 0.3})`;
     ctx.beginPath();
-    ctx.ellipse(side * 2 * s, 0, 4 * s, 2.4 * s, 0, 0, Math.PI * 2);
+    ctx.arc(side * 3 * s, -1.5 * s, 1.8 * s, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   });
 
-  ctx.restore(); // tête
-  ctx.restore(); // personnage
+  // petit bec, sous les yeux (détail de céphalopode)
+  ctx.fillStyle = '#241c30';
+  ctx.beginPath();
+  ctx.moveTo(-4 * s, mantleCY + 10 * s);
+  ctx.lineTo(4 * s, mantleCY + 10 * s);
+  ctx.lineTo(0, mantleCY + 15 * s);
+  ctx.closePath();
+  ctx.fill();
+
+  // --- casque DJ, posé sur la mante ---
+  ctx.strokeStyle = '#1c1a24';
+  ctx.lineWidth = 4 * s;
+  ctx.beginPath();
+  ctx.arc(0, mantleCY - 2 * s, mantleR * 1.02, Math.PI * 1.18, Math.PI * 1.82);
+  ctx.stroke();
+  [-1, 1].forEach(side => {
+    const ex = side * mantleR * 0.92, ey = mantleCY + mantleR * 0.1;
+    ctx.fillStyle = '#1c1a24';
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, 9 * s, 12 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    strokeOutline(ctx, '#1c1a24', 1.6);
+    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.6 + pulseEnv * 0.35})`;
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, 4.4 * s, 6.4 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
 }
 
 // Podium surélevé du DJ, commun aux 3 mainstages : une estrade avec une face avant
@@ -1980,6 +2063,66 @@ function drawStagePlatform(theme) {
   ctx.moveTo(cx - halfW, topY + 8);
   ctx.lineTo(cx + halfW, topY + 8);
   ctx.stroke();
+}
+
+// Cabine DJ (platines + table de mixage) posée sur le podium : indépendante de
+// tout joueur (le DJ n'est plus figé sur scène, il est sur la piste comme les
+// festivaliers - cf. drawPlayer), mais le décor de scène doit quand même
+// montrer du matériel de DJ. Dessinée une seule fois par frame dans
+// drawBackground, juste après le podium.
+function drawStageDeckProp(theme) {
+  const { topY, cx } = stagePlatformBounds();
+  ctx.save();
+  ctx.translate(cx, topY - 30);
+
+  // ombre portée sur le podium
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(0, 32, 92, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // caisson de la cabine
+  ctx.fillStyle = '#2a2140';
+  roundRect(ctx, -80, -28, 160, 56, 12);
+  ctx.fill();
+  strokeOutline(ctx, '#2a2140', 2);
+  ctx.fillStyle = shadeColor('#2a2140', 16);
+  roundRect(ctx, -80, -28, 160, 13, 11);
+  ctx.fill();
+
+  // deux platines vinyle, chacune dans son propre sous-chemin (jamais deux
+  // arcs dans un même chemin sans beginPath : ça les relie par un trait droit)
+  [-36, 36].forEach(px => {
+    ctx.fillStyle = '#151022';
+    ctx.beginPath();
+    ctx.arc(px, 6, 17, 0, Math.PI * 2);
+    ctx.fill();
+    strokeOutline(ctx, '#151022', 1.6);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.lineWidth = 1;
+    for (let r = 5; r < 16; r += 3.4) {
+      ctx.beginPath();
+      ctx.arc(px, 6, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = theme.accent;
+    ctx.beginPath();
+    ctx.arc(px, 6, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // petite table de mixage centrale
+  ctx.fillStyle = '#1a1526';
+  roundRect(ctx, -13, -8, 26, 24, 4);
+  ctx.fill();
+  ctx.fillStyle = theme.accent;
+  [-8, 0, 8].forEach(dx => {
+    ctx.beginPath();
+    ctx.arc(dx, 3, 2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
 }
 
 // Bornes de la barrière de sécurité : sa base (au sol, cf. stageMinY) et le haut
@@ -3015,8 +3158,6 @@ function drawHumanBody(c, move, accessory, color, isMe, t, motionState, custom) 
     strokeOutline(c, '#caa25a', 2);
   }
   drawPremiumAccessory(c, accessory, -32, 17);
-
-  drawSelfRing(c, isMe, -32, 23);
 }
 
 // --- avatar "Robot" : corps carré, une antenne, un œil rond ---
@@ -3096,8 +3237,6 @@ function drawRobotBody(c, move, accessory, color, isMe, t, motionState) {
     strokeOutline(c, capColor, 1.8);
   }
   drawPremiumAccessory(c, accessory, -33, 16);
-
-  drawSelfRing(c, isMe, -33, 26);
 }
 
 // --- avatar "Alien" : grosse tête, grands yeux ---
@@ -3161,8 +3300,6 @@ function drawAlienBody(c, move, accessory, color, isMe, t, motionState) {
     strokeOutline(c, '#caa25a', 2);
   }
   drawPremiumAccessory(c, accessory, -32, 20);
-
-  drawSelfRing(c, isMe, -32, 27);
 }
 
 // --- avatar "Fantôme" : flotte, pas de jambes ---
@@ -3232,8 +3369,6 @@ function drawGhostBody(c, move, accessory, color, isMe, t, motionState) {
     strokeOutline(c, '#caa25a', 1.8);
   }
   drawPremiumAccessory(c, accessory, -22, 15);
-
-  drawSelfRing(c, isMe, -14, 24);
 }
 
 // --- avatar "Dragonnet" : cornes, ailes, queue ---
@@ -3338,8 +3473,6 @@ function drawDragonBody(c, move, accessory, color, isMe, t, motionState) {
     strokeOutline(c, '#caa25a', 1.8);
   }
   drawPremiumAccessory(c, accessory, -28, 14);
-
-  drawSelfRing(c, isMe, -28, 20);
 }
 
 // --- avatar "Blob" : rond, tentacules, un œil ---
@@ -3421,8 +3554,6 @@ function drawBlobBody(c, move, accessory, color, isMe, t, motionState) {
     strokeOutline(c, '#caa25a', 1.8);
   }
   drawPremiumAccessory(c, accessory, -8, 18);
-
-  drawSelfRing(c, isMe, -8, 24);
 }
 
 // Fait vibrer légèrement toute la scène (piste + joueurs) en rythme, et
