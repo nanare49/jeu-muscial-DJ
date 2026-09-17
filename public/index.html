@@ -549,6 +549,8 @@
       <option value="sweep">Mur (balayage synchronisé)</option>
       <option value="converge">Entonnoir (convergent)</option>
       <option value="chase">Chenillard</option>
+      <option value="burst">Rafale (plusieurs lasers d'un coup)</option>
+      <option value="flash">Flash</option>
     </select>
   </div>
 
@@ -3876,6 +3878,25 @@ function drawLaserEffect(t, power, speed, laser) {
       dist = Math.min(dist, sourceCount - dist);
       beamAlphaMul = Math.max(0, 1 - dist * 0.85);
       angle = Math.PI / 2 + Math.sin(i * 2.1) * 0.5; // angles fixes par source, juste la luminosité chenille
+    } else if (laser.style === 'burst') {
+      // "Plusieurs lasers au départ" : toutes les sources s'allument ENSEMBLE
+      // en rafale, dans un éventail fixe et symétrique, plutôt que déphasées
+      // les unes des autres comme les autres styles — façon salve de lasers
+      // façon "blinder" de concert, très marquée sur un drop.
+      angle = Math.PI / 2 + (i - (sourceCount - 1) / 2) * (1.4 / Math.max(1, sourceCount - 1));
+      const base = reactive ? vjLaserPhase * 2.6 : (t / 420) * speed;
+      const pulse = (Math.sin(base) + 1) / 2; // même phase pour toutes les sources -> vraie salve synchronisée
+      beamAlphaMul = Math.pow(pulse, 2.2); // montée/descente toujours douces, jamais de coupure nette
+    } else if (laser.style === 'flash') {
+      // "Effet flash" : toutes les sources clignotent à l'unisson façon flash,
+      // mais bridé comme le reste du jeu — jamais plus de ~2-3 pics par
+      // seconde et toujours une vraie courbe progressive, jamais un aplat net
+      // (cf. STROBE_HALF_PERIOD_MS/FLASH_ALPHA_MAX plus bas dans le fichier).
+      angle = Math.PI / 2 + Math.sin(i * 2.1) * 0.6;
+      const periodMs = 430 / Math.max(0.4, speed);
+      const base = reactive ? vjLaserPhase * 3.2 : (t / periodMs);
+      const cyc = (Math.sin(base * Math.PI * 2) + 1) / 2;
+      beamAlphaMul = Math.pow(cyc, 6); // pic bref mais progressif, jamais un vrai on/off
     } else {
       // balayage rotatif, chaque source déphasée pour ne pas pointer toutes pareil
       const base = reactive ? vjLaserPhase : (t / 1100) * speed;
@@ -4065,11 +4086,12 @@ function drawSparksEffect(t, power, speed, sparks) {
   }
 }
 
-// Nuage de fumée : deux canons de part et d'autre de la scène, un jet qui
+// Nuage de fumée : plusieurs canons répartis devant la scène, un jet qui
 // monte et se disperse en s'élargissant (comme une vraie fumée de canon CO2).
 // Canons à fumée : jets bien verticaux (peu d'écart latéral, cf. `spread`
-// réduit), denses et opaques (plus de bouffées par canon, alpha plus haut) —
-// façon vrai canon CO2 de scène plutôt qu'un nuage diffus.
+// réduit), avec un cœur dense et quasi blanc près de la buse qui ne se
+// diffuse qu'en montant (façon vrai jet de CO2 sous pression, pas un simple
+// nuage flou) — et beaucoup de bouffées par canon pour un rendu bien épais.
 function drawSmokeCannonEffect(t, power, speed, smoke) {
   const rgb = hexToRgb(smoke.color || '#cfd6e6');
   const count = smoke.count || 4;
@@ -4079,33 +4101,54 @@ function drawSmokeCannonEffect(t, power, speed, smoke) {
   const originXs = count <= 1 ? [W / 2] : allPositions.slice(0, count);
 
   originXs.forEach((originX, oi) => {
-    const puffsPerCannon = 18;
+    const puffsPerCannon = 26;
     for (let i = 0; i < puffsPerCannon; i++) {
       const seed = oi * 37.1 + i * 12.7;
-      const cycleDuration = 1.9 / Math.max(0.4, speed);
+      const cycleDuration = 1.7 / Math.max(0.4, speed);
       const tau = (((t / 1000) * speed + seed) % cycleDuration) / cycleDuration; // 0..1
       const rise = tau * (170 + power * 150);
       // écart latéral volontairement faible : le jet reste bien vertical,
       // il ne fait que s'évaser très légèrement en montant.
-      const spread = tau * (10 + power * 12);
+      const spread = tau * (11 + power * 13);
       const wobble = Math.sin(seed + tau * 3) * spread;
       const x = originX + wobble;
       const y = baseY - rise;
-      const alpha = Math.max(0, Math.pow(1 - tau, 0.7) * 0.75 * Math.min(1.3, power));
+      const alpha = Math.max(0, Math.pow(1 - tau, 0.65) * 0.85 * Math.min(1.4, power));
       if (alpha < 0.02) continue;
-      const size = 16 + tau * 46;
+      // taille nettement plus généreuse (jet "épais"), et un cœur quasi blanc
+      // très dense tout près de la buse (tau proche de 0), qui laisse place au
+      // gris habituel une fois que le jet a commencé à se disperser.
+      const size = 22 + tau * 66;
+      const coreMix = Math.max(0, 1 - tau * 2.2); // 1 tout près de la buse -> 0 assez vite
+      const r = Math.round(rgb.r + (255 - rgb.r) * coreMix);
+      const g = Math.round(rgb.g + (255 - rgb.g) * coreMix);
+      const b = Math.round(rgb.b + (255 - rgb.b) * coreMix);
       const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
-      grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`);
-      grad.addColorStop(0.6, `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha * 0.7})`);
-      grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
+      grad.addColorStop(0, `rgba(${r},${g},${b},${alpha})`);
+      grad.addColorStop(0.55, `rgba(${r},${g},${b},${alpha * 0.75})`);
+      grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.arc(x, y, size, 0, Math.PI * 2);
       ctx.fill();
     }
-    // buse du canon, au sol
-    ctx.fillStyle = '#2a2438';
-    roundRect(ctx, originX - 10, baseY - 4, 20, 11, 3);
+    // jet dense et net juste à la sortie de la buse (avant que ça ne
+    // commence à se disperser), pour un vrai "coup" de CO2 sous pression.
+    const jetH = 26 + power * 18;
+    const jetGrad = ctx.createLinearGradient(originX, baseY, originX, baseY - jetH);
+    jetGrad.addColorStop(0, `rgba(255,255,255,${0.75 * power})`);
+    jetGrad.addColorStop(1, `rgba(255,255,255,0)`);
+    ctx.fillStyle = jetGrad;
+    ctx.beginPath();
+    ctx.ellipse(originX, baseY - jetH * 0.5, 13 + power * 4, jetH * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // buse du canon, au sol — plus large et plus "métal", façon vrai canon CO2
+    ctx.fillStyle = '#1c1826';
+    roundRect(ctx, originX - 13, baseY - 5, 26, 14, 4);
+    ctx.fill();
+    ctx.fillStyle = '#3a3448';
+    roundRect(ctx, originX - 9, baseY - 8, 18, 5, 2);
     ctx.fill();
   });
 }
@@ -4304,34 +4347,51 @@ function drawCo2Bursts(co2Positions, t) {
   const burst = co2BurstEnvelope();
   if (burst <= 0.01) return;
   const { topY: barrierTopY } = crowdBarrierBounds();
-  const rgb = { r: 235, g: 240, b: 250 };
+  const rgb = { r: 225, g: 232, b: 245 };
 
   co2Positions.forEach((c, oi) => {
     const nozzleY = c.y + 14;
     const travel = barrierTopY - nozzleY;
     if (travel <= 0) return;
-    const puffs = 22;
+    // Plus de bouffées, plus grosses, avec un cœur quasi blanc tout près de
+    // la buse (façon vrai jet de CO2 sous pression bien épais) qui laisse
+    // place au gris habituel une fois que le jet a commencé à se disperser.
+    const puffs = 30;
     for (let i = 0; i < puffs; i++) {
       const seed = oi * 41.3 + i * 9.7;
       const tau = (((t / 1000) + seed) % 0.65) / 0.65; // 0..1, jet dense et rapide
       const fall = nozzleY + tau * travel;
       if (fall > barrierTopY) continue; // ne descend jamais sous la barrière (pas sur la piste)
-      const wobble = Math.sin(seed + tau * 4) * (6 + tau * 10);
+      const wobble = Math.sin(seed + tau * 4) * (8 + tau * 13);
       const x = c.x + wobble;
-      const size = 10 + tau * 30;
-      const alpha = Math.max(0, 1 - tau * 0.6) * 0.8 * burst;
+      const size = 14 + tau * 42;
+      const alpha = Math.max(0, 1 - tau * 0.55) * 0.85 * burst;
       if (alpha < 0.03) continue;
+      const coreMix = Math.max(0, 1 - tau * 2);
+      const r = Math.round(rgb.r + (255 - rgb.r) * coreMix);
+      const g = Math.round(rgb.g + (255 - rgb.g) * coreMix);
+      const b = Math.round(rgb.b + (255 - rgb.b) * coreMix);
       const grad = ctx.createRadialGradient(x, fall, 0, x, fall, size);
-      grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`);
-      grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
+      grad.addColorStop(0, `rgba(${r},${g},${b},${alpha})`);
+      grad.addColorStop(0.55, `rgba(${r},${g},${b},${alpha * 0.75})`);
+      grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.arc(x, fall, size, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = `rgba(255,255,255,${0.55 * burst})`;
+    // jet net et dense juste à la sortie de la buse
+    const jetH = 30 * burst + 10;
+    const jetGrad = ctx.createLinearGradient(c.x, nozzleY, c.x, nozzleY + jetH);
+    jetGrad.addColorStop(0, `rgba(255,255,255,${0.85 * burst})`);
+    jetGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = jetGrad;
     ctx.beginPath();
-    ctx.arc(c.x, nozzleY, 5, 0, Math.PI * 2);
+    ctx.ellipse(c.x, nozzleY + jetH * 0.5, 9, jetH * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255,255,255,${0.6 * burst})`;
+    ctx.beginPath();
+    ctx.arc(c.x, nozzleY, 6.5, 0, Math.PI * 2);
     ctx.fill();
   });
 }
@@ -5149,9 +5209,21 @@ function isRealAudioActive() {
 // jamais l'état serveur (currentLightEffects), qui reste ce que les contrôles
 // du DJ affichent et envoient.
 const AUTO_VJ_COLORS = ['#ff5fa3', '#5ad1ff', '#ffd35a', '#4ade80', '#c084fc', '#ff8c3d', '#33e6e6', '#ff4d6d'];
+// Palette de couleurs par séquence : la couleur ne se contente plus de
+// changer à chaque kick au hasard dans la même liste, elle suit vraiment
+// l'ambiance de la séquence — plus froid/posé en couplet, plus chaud à
+// l'approche du drop, franc et éclatant (quasi blanc) pendant le drop lui-même.
+const SECTION_COLOR_POOLS = {
+  calm: ['#5ad1ff', '#7c9bff', '#33e6e6', '#8a7bff'],
+  normal: AUTO_VJ_COLORS,
+  buildup: ['#ffd35a', '#ff8c3d', '#ff5fa3', '#ffb84d'],
+  drop: ['#ffffff', '#ff4d6d', '#ff5fa3', '#5ad1ff', '#4ade80'],
+};
 // Formats de laser tirés au sort pour le "drop" (effet fort mais varié d'un
-// drop à l'autre) et pour l'ambiance "normale" (moins spectaculaires).
-const DROP_LASER_STYLES = ['fan', 'converge', 'chase', 'cross'];
+// drop à l'autre — burst/flash en plus, pour une vraie rafale façon plusieurs
+// lasers qui claquent d'un coup) et pour l'ambiance "normale" (moins
+// spectaculaires).
+const DROP_LASER_STYLES = ['burst', 'flash', 'fan', 'converge', 'chase', 'cross'];
 const NORMAL_LASER_STYLES = ['rotating', 'sweep'];
 let vjDropLaserStyle = 'fan';
 let vjNormalLaserStyle = 'rotating';
@@ -5166,10 +5238,11 @@ let vjColorKickSeen = 0;     // dernier lastKickAt pris en compte pour changer d
 let vjLaserPhase = 0;
 let vjLastFrameAt = null;
 
-function pickAutoVjColor(avoid) {
-  let c = AUTO_VJ_COLORS[Math.floor(Math.random() * AUTO_VJ_COLORS.length)];
-  if (c === avoid && AUTO_VJ_COLORS.length > 1) {
-    c = AUTO_VJ_COLORS[(AUTO_VJ_COLORS.indexOf(c) + 1) % AUTO_VJ_COLORS.length];
+function pickAutoVjColor(avoid, pool) {
+  const list = pool && pool.length ? pool : AUTO_VJ_COLORS;
+  let c = list[Math.floor(Math.random() * list.length)];
+  if (c === avoid && list.length > 1) {
+    c = list[(list.indexOf(c) + 1) % list.length];
   }
   return c;
 }
@@ -5201,6 +5274,9 @@ function updateReactiveAutoVJ(now) {
       // format de laser tiré au sort à chaque nouveau drop, pour varier — "plus
       // de formats différents de laser" plutôt que toujours le même à chaque drop
       vjDropLaserStyle = DROP_LASER_STYLES[Math.floor(Math.random() * DROP_LASER_STYLES.length)];
+      // la couleur "claque" pile au moment où le drop démarre (palette franche/
+      // éclatante), plutôt que d'attendre le prochain kick pour en changer.
+      vjColor = pickAutoVjColor(vjColor, SECTION_COLOR_POOLS.drop);
     } else if (vjEmaShort < vjEmaLong * 0.9) {
       // la montée est retombée sans déclencher de drop : retour au calme
       vjState = 'normal';
@@ -5219,10 +5295,13 @@ function updateReactiveAutoVJ(now) {
     }
   }
 
-  // couleur commune à tous les effets, qui change à chaque kick détecté
+  // couleur commune à tous les effets, qui change à chaque kick détecté — la
+  // palette dans laquelle elle est tirée suit la séquence en cours (cf.
+  // SECTION_COLOR_POOLS), donc la couleur "raconte" vraiment où on en est
+  // dans le morceau plutôt que de rester un simple tirage indépendant.
   if (lastKickAt !== vjColorKickSeen && lastKickStrength > 0.2) {
     vjColorKickSeen = lastKickAt;
-    vjColor = pickAutoVjColor(vjColor);
+    vjColor = pickAutoVjColor(vjColor, SECTION_COLOR_POOLS[vjState]);
   }
 
   // le flash plein écran ne redéclenche jamais plus vite que FLASH_MIN_INTERVAL_MS,
@@ -5286,7 +5365,10 @@ function reactiveLightEffectsFor(state) {
     base.fireballs.on = true;
     base.sparks.on = true;
     base.sparks.intensity = 1;
+    // "en masse" pile sur le drop (jamais en couplet/montée, cf. plus haut) :
+    // tous les canons à fumée d'un coup plutôt qu'une poignée.
     base.smoke.on = true;
+    base.smoke.count = 7;
     base.laser.count = 8;
     base.laser.style = vjDropLaserStyle;
     // légèrement "en surrégime" (au-delà de 1) pour l'impact du drop, mais
