@@ -3751,17 +3751,21 @@ function loop(t) {
   // tremblement explicitement déclenché par le DJ fait bouger la piste, et
   // l'assombrissement reste éteint (pas demandé en mode manuel).
   const autoOn = !!(currentLightEffects && currentLightEffects.autoMode);
-  // La structure métallique (truss, cf. drawTrussLights) reste réactive au son
-  // en continu, même si le DJ n'a pas activé "suivre la musique automatiquement"
-  // (ce mode auto ne concerne que SES effets à lui) : on garde donc l'énergie
-  // réelle toujours à jour dès qu'un fichier importé joue, indépendamment de autoOn.
-  if (isRealAudioActive()) updateRealMusicEnergy();
+  // La structure métallique (truss, cf. drawTrussLights/currentMusicSection)
+  // reste réactive au son en continu, même si le DJ n'a pas activé "suivre la
+  // musique automatiquement" (ce mode auto ne concerne que SES effets à lui) :
+  // on garde donc l'énergie réelle ET la détection de séquence (vjState —
+  // couplet/montée/drop) toujours à jour dès qu'un fichier importé joue,
+  // indépendamment de autoOn.
+  if (isRealAudioActive()) {
+    updateRealMusicEnergy();
+    updateReactiveAutoVJ(t);
+  }
   let beat = null, autoEnv = 0;
   if (autoOn && isRealAudioActive()) {
     // fichier importé : vraie analyse du son (cf. updateRealMusicEnergy) au lieu
     // du rythme simulé — `beat` ne sert plus ici qu'à signaler "une musique
     // tourne" à drawMusicPulseOverlay, l'intensité vient directement du son réel.
-    updateReactiveAutoVJ(t);
     autoEnv = realMusicEnergy;
     beat = 1 - autoEnv;
   } else if (autoOn) {
@@ -4118,32 +4122,65 @@ function drawSmokeCannonEffect(t, power, speed, smoke) {
 // (cf. STROBE_PEAK_MAX / FLASH_ALPHA_MAX plus bas).
 function drawTrussLights(t, pulseEnv) {
   const pos = trussFixturePositions();
-  const env = 0.35 + 0.65 * Math.max(0, Math.min(1, pulseEnv || 0));
-  const tempo = trussTempoFactor();
+  const sec = musicSectionParams();
+  const env = Math.max(sec.env, 0.3 + 0.6 * Math.max(0, Math.min(1, pulseEnv || 0)));
+  const tempo = sec.tempo;
 
   pos.movingHeads.forEach(h => drawMovingHeadBeam(h, t, env, tempo));
   pos.lasers.forEach((l, li) => drawTrussLaserProjector(l, t, env, tempo, li));
   drawCo2Bursts(pos.co2, t);
 }
 
-// Vitesse (tempo) à laquelle les lyres/lasers de la structure doivent bouger,
-// dérivée de la musique en cours — l'intensité (pulseEnv/env ci-dessus)
-// n'est plus le seul paramètre réactif : la vitesse de balayage suit elle
-// aussi le rythme. Fichier importé -> vraie énergie du son en direct
-// (cf. updateRealMusicEnergy, toujours tenue à jour dans loop()) ; lien
-// YouTube -> tempo simulé envoyé par le serveur (musicPulse.bpm, cf.
-// beatPhase) ; rien en cours -> mouvement calme par défaut, jamais figé.
-function trussTempoFactor() {
-  if (isRealAudioActive()) {
-    return 0.65 + realMusicEnergy * 1.55;
+// Paramètres par séquence de morceau ('calm'|'normal'|'buildup'|'drop') :
+// couplet calme -> lumières lentes et discrètes ; montée -> ça s'accélère ;
+// drop -> vitesse et intensité maximales. Mêmes noms de séquence que le
+// système de régie réactive existant (vjState, cf. updateReactiveAutoVJ),
+// réutilisés ici pour que toute la structure (et pas seulement les effets du
+// DJ) suive vraiment l'intensité de chaque séquence, comme demandé.
+const MUSIC_SECTION_PARAMS = {
+  calm:    { tempo: 0.5, env: 0.22 },
+  normal:  { tempo: 1.0, env: 0.5 },
+  buildup: { tempo: 1.7, env: 0.8 },
+  drop:    { tempo: 2.3, env: 1.0 },
+};
+
+// Détecte la séquence de musique en cours et une "énergie" 0..1 associée :
+// - fichier importé : vraie détection (vjState, calculée en continu dans
+//   loop() via updateReactiveAutoVJ, désormais indépendante du mode auto du
+//   DJ — cf. loop()) à partir d'une vraie analyse du son.
+// - lien YouTube : impossible d'analyser le son d'une iframe tierce, donc pas
+//   de vraie détection couplet/refrain — on approxime quand même build-up et
+//   drop à partir du seul repère de structure que le serveur connaît lui
+//   aussi : le prochain "drop" programmé (cf. co2BurstStartAt/EndAt, réglés
+//   par l'évènement music-drop). Hors de cette fenêtre, on retombe sur
+//   'normal' tant qu'un rythme simulé tourne, 'calm' sinon.
+function currentMusicSection() {
+  if (isRealAudioActive()) return { state: vjState, energy: realMusicEnergy };
+
+  const now = serverNow();
+  if (co2BurstEndAt) {
+    if (now >= co2BurstStartAt - 2600 && now < co2BurstStartAt) {
+      return { state: 'buildup', energy: 1 - (co2BurstStartAt - now) / 2600 };
+    }
+    if (now >= co2BurstStartAt && now < co2BurstEndAt) {
+      return { state: 'drop', energy: 1 };
+    }
   }
-  const beat = beatPhase();
-  if (beat !== null && musicPulse && musicPulse.bpm) {
-    const bpmFactor = Math.min(2.1, Math.max(0.75, musicPulse.bpm / 118));
-    const kick = Math.pow(1 - beat, 3) * 0.5; // petit "coup d'accélérateur" à chaque temps
-    return bpmFactor + kick;
-  }
-  return 0.55;
+  return beatPhase() !== null ? { state: 'normal', energy: 0.4 } : { state: 'calm', energy: 0 };
+}
+
+// Vitesse (tempo) et intensité (env) à appliquer aux lyres/lasers de la
+// structure pour la séquence en cours — l'intensité seule (pulseEnv) n'est
+// plus le seul paramètre réactif : la vitesse de balayage suit elle aussi le
+// rythme ET change nettement d'une séquence à l'autre (couplet/montée/drop).
+function musicSectionParams() {
+  const sec = currentMusicSection();
+  const p = MUSIC_SECTION_PARAMS[sec.state] || MUSIC_SECTION_PARAMS.normal;
+  return {
+    tempo: p.tempo + sec.energy * 0.5,
+    env: Math.min(1, p.env + sec.energy * 0.25),
+    state: sec.state,
+  };
 }
 
 // Lyre motorisée (beam ou wash) : léger balayage pan/tilt individuel (sinus
@@ -4901,7 +4938,7 @@ window.onYouTubeIframeAPIReady = function () {
       onReady: () => {
         ytPlayerReady = true;
         ytPlayer.setVolume(ytVolume);
-        document.getElementById('yt-unmute-btn').classList.remove('hidden');
+        refreshUnmuteButtonVisibility();
         if (pendingVideo) {
           const cv = pendingVideo;
           pendingVideo = null;
@@ -4923,16 +4960,36 @@ const ytScript = document.createElement('script');
 ytScript.src = 'https://www.youtube.com/iframe_api';
 document.head.appendChild(ytScript);
 
+// Sous Safari (surtout iPhone/iPad), appeler unMute() ne suffit pas toujours
+// à débloquer réellement le son d'une iframe tierce (YouTube) : le message
+// part bien, mais Safari peut malgré tout garder la lecture muette selon la
+// politique autoplay de CE cadre précis. Se fier à "on a tenté unMute() donc
+// on cache le bouton" était le vrai bug remonté : le bouton disparaissait dès
+// la première interaction anodine sur la page (ex: valider son avatar, AVANT
+// même qu'un morceau ne joue), donc quand le son restait coupé au moment où
+// la musique démarrait vraiment, il n'y avait plus aucun moyen de réessayer.
+// On vérifie donc l'état RÉEL régulièrement (isMuted()) et on ne cache le
+// bouton que quand le son est effectivement actif.
+function refreshUnmuteButtonVisibility() {
+  const btn = document.getElementById('yt-unmute-btn');
+  let stillMuted = false;
+  if (ytPlayer && ytPlayerReady && typeof ytPlayer.isMuted === 'function') {
+    try { stillMuted = !!ytPlayer.isMuted(); } catch (e) {}
+  }
+  if (localTrackPlayer && localTrackPlayer.muted) stillMuted = true;
+  btn.classList.toggle('hidden', !stillMuted);
+}
+
 function unmutePlayer() {
   if (ytPlayer && ytPlayerReady) {
     ytPlayer.unMute();
     ytPlayer.setVolume(ytVolume);
-    // Safari (surtout iOS/iPadOS) n'autorise le son d'une iframe multimédia
-    // que si l'appel se produit bien PENDANT le geste utilisateur d'origine —
-    // un simple unMute() ne suffit pas toujours : on relance aussi la lecture
-    // à ce moment précis, ce qui débloque le son de façon fiable même quand
+    // Safari n'autorise le son d'une iframe multimédia que si l'appel se
+    // produit bien PENDANT le geste utilisateur d'origine — un simple
+    // unMute() ne suffit pas toujours : on relance aussi la lecture à ce
+    // moment précis, ce qui débloque le son de façon plus fiable même quand
     // Chrome n'en avait pas besoin.
-    if (currentVideoState && !currentVideoState.paused) {
+    if (currentVideoState && currentVideoState.source !== 'file' && !currentVideoState.paused) {
       try { ytPlayer.playVideo(); } catch (e) {}
     }
   }
@@ -4941,19 +4998,31 @@ function unmutePlayer() {
     localTrackPlayer.play().catch(() => {});
   }
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-  document.getElementById('yt-unmute-btn').classList.add('hidden');
+  // L'appel à unMute() passe par un postMessage vers l'iframe YouTube (autre
+  // origine) : la réponse n'est pas immédiate, donc on vérifie l'état réel un
+  // instant après plutôt que de supposer que ça a marché.
+  refreshUnmuteButtonVisibility();
+  setTimeout(refreshUnmuteButtonVisibility, 250);
+  setTimeout(refreshUnmuteButtonVisibility, 900);
 }
 document.getElementById('yt-unmute-btn').addEventListener('click', unmutePlayer);
 // Tentative en plus : la toute première interaction n'importe où sur la page
-// active aussi le son. Safari (notamment sur iPhone/iPad) ne considère PAS
-// qu'un simple glissement tactile (ex: déplacer un curseur comme celui du
-// volume) déclenche un évènement "click" — seuls des évènements comme
-// touchstart/pointerdown le font — donc se limiter à 'click' laissait le son
-// coupé pour quiconque commençait par toucher un curseur plutôt que de
-// taper un bouton, ce qui explique le souci remonté sous Safari.
+// essaie aussi de débloquer le son. Safari (notamment sur iPhone/iPad) ne
+// considère PAS qu'un simple glissement tactile (ex: déplacer un curseur
+// comme celui du volume) déclenche un évènement "click" — seuls des
+// évènements comme touchstart/pointerdown le font — donc se limiter à
+// 'click' laissait le son coupé pour quiconque commençait par toucher un
+// curseur plutôt que de taper un bouton. Ce n'est qu'une TENTATIVE en plus :
+// le bouton "Activer le son" (cf. refreshUnmuteButtonVisibility) reste
+// affiché tant que le son n'est pas confirmé réellement actif, pour que la
+// personne puisse toujours réessayer explicitement si ça n'a pas suffi.
 ['click', 'touchstart', 'pointerdown', 'keydown'].forEach(evt => {
   document.addEventListener(evt, unmutePlayer, { once: true, passive: true });
 });
+// Vérification périodique : couvre le cas où le son se coupe de nouveau tout
+// seul (ex: nouvelle vidéo chargée) sans qu'aucun des évènements ci-dessus ne
+// se redéclenche.
+setInterval(refreshUnmuteButtonVisibility, 1500);
 
 document.getElementById('yt-volume').addEventListener('input', (e) => {
   ytVolume = parseInt(e.target.value, 10);
@@ -4961,6 +5030,11 @@ document.getElementById('yt-volume').addEventListener('input', (e) => {
   localStorage.setItem('ytVolume', ytVolume);
   if (ytPlayer && ytPlayerReady) ytPlayer.setVolume(ytVolume);
   localTrackPlayer.volume = ytVolume / 100;
+  // Chaque réglage de volume retente aussi le déblocage du son (pas juste le
+  // tout premier, cf. commentaire au-dessus de unmutePlayer) : si Safari a
+  // ignoré la première tentative, la personne qui bouge le curseur du volume
+  // pour essayer d'entendre quelque chose redéclenche l'essai à chaque fois.
+  unmutePlayer();
 });
 // Filet de sécurité dédié : si la toute première chose que la personne fait
 // sur la page est de régler le volume (très probable vu le contrôle), ce
@@ -4969,7 +5043,7 @@ document.getElementById('yt-volume').addEventListener('input', (e) => {
 // déclenche déjà l'un des évènements globaux ci-dessus, mais on s'assure
 // ici explicitement que le curseur de volume ne fait jamais exception.
 ['pointerdown', 'touchstart'].forEach(evt => {
-  document.getElementById('yt-volume').addEventListener(evt, unmutePlayer, { once: true, passive: true });
+  document.getElementById('yt-volume').addEventListener(evt, unmutePlayer, { passive: true });
 });
 
 // --- analyse audio réelle d'un fichier importé --------------------------------
