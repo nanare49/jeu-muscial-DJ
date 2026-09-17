@@ -481,14 +481,8 @@
     <span id="track-timing-elapsed">0:00</span>
     <span id="track-timing-duration">--:--</span>
   </div>
-  <div id="dj-mode-row" style="display:none; margin-top:10px; gap:6px;">
-    <select id="dj-mode-select" style="width:100%; background:var(--input-bg); border:1px solid var(--line); color:var(--text); border-radius:var(--radius-md); padding:6px 8px; font-size:12px;">
-      <option value="fixed">DJ unique (moi)</option>
-      <option value="queue">File d'attente (façon plug.dj)</option>
-    </select>
-  </div>
-  <div id="dj-queue-box" style="display:none; margin-top:10px;">
-    <div id="dj-queue-title">File d'attente</div>
+  <div id="dj-queue-box" style="margin-top:10px;">
+    <div id="dj-queue-title">File d'attente — chacun joue son tour</div>
     <ol id="dj-queue-list"></ol>
     <button id="dj-queue-btn" class="btn" style="width:100%;"></button>
   </div>
@@ -763,9 +757,7 @@ let selfId = null;
 let players = {};
 let currentDecor = 'mainstage';
 let myDjId = null;
-let myCreatorId = null;
-let djMode = 'fixed';
-let djQueue = [];
+let djQueue = []; // file d'attente obligatoire : tout le monde sauf le DJ actuel, chacun joue son tour
 let canStartNewTrack = true; // cf. évènement 'dj-turn-state' : un DJ en file ne peut pas relancer avant de céder la main
 let currentLightEffects = {
   flash: { on: false, color: '#ff5fa3' },
@@ -1043,8 +1035,6 @@ socket.on('room-state', (state) => {
   }
 
   myDjId = state.djId;
-  myCreatorId = state.creatorId;
-  djMode = state.djMode || 'fixed';
   djQueue = state.djQueue || [];
   canStartNewTrack = state.canStartNewTrack !== false;
   if (state.lightEffects) {
@@ -1072,7 +1062,7 @@ socket.on('room-state', (state) => {
   renderAccessoryBar();
 
   renderBubbleControlBar();
-  renderDjModeUI();
+  renderDjQueueUI();
 });
 socket.on('player-joined', ({ id, player }) => { players[id] = player; });
 socket.on('player-left', ({ id }) => { delete players[id]; });
@@ -1088,7 +1078,7 @@ socket.on('player-bubble-size', ({ id, size }) => { if (players[id]) players[id]
 socket.on('dj-changed', (djId) => {
   myDjId = djId;
   renderBubbleControlBar();
-  renderDjModeUI();
+  renderDjQueueUI();
 });
 socket.on('profile-updated', (profile) => {
   myProfile = profile;
@@ -1289,8 +1279,7 @@ function drawDiscoTiles(t) {
     ctx.restore();
   });
 }
-socket.on('dj-mode-changed', ({ mode, queue }) => { djMode = mode; djQueue = queue; renderDjModeUI(); });
-socket.on('dj-queue-changed', (queue) => { djQueue = queue; renderDjModeUI(); });
+socket.on('dj-queue-changed', (queue) => { djQueue = queue; renderDjQueueUI(); });
 socket.on('dj-turn-state', ({ canStartNewTrack: c }) => { canStartNewTrack = c; renderYoutubeControlsVisibility(); });
 socket.on('light-effects-changed', (le) => { currentLightEffects = le; syncLightEffectsControls(); });
 socket.on('decor-changed', (decor) => {
@@ -1302,10 +1291,6 @@ document.getElementById('decor-select').addEventListener('change', (e) => {
   socket.emit('decor', e.target.value);
 });
 
-// --- mode DJ (unique / file d'attente), réservé au créateur de la salle ---
-document.getElementById('dj-mode-select').addEventListener('change', (e) => {
-  socket.emit('set-dj-mode', e.target.value);
-});
 
 // --- effets lumineux (contrôlés par le DJ, visibles par tout le monde) ---
 function currentFxStateFromControls() {
@@ -1416,30 +1401,23 @@ function syncLightEffectsControls() {
   manualBox.style.pointerEvents = le.autoMode ? 'none' : 'auto';
 }
 
-function renderDjModeUI() {
-  const modeRow = document.getElementById('dj-mode-row');
-  const amICreator = selfId && selfId === myCreatorId;
-  modeRow.style.display = amICreator ? 'block' : 'none';
-  if (amICreator) document.getElementById('dj-mode-select').value = djMode;
-
+// Tout le monde dans la salle joue son tour de DJ, automatiquement et dans
+// l'ordre d'arrivée : plus besoin de s'inscrire ni de pouvoir se désinscrire.
+// Ce cadre affiche juste l'ordre de passage ; seul le DJ actuel voit un
+// bouton, pour céder la main tout de suite plutôt que d'attendre la fin du
+// morceau (le passage automatique se fait de toute façon à la fin).
+function renderDjQueueUI() {
   renderYoutubeControlsVisibility();
   renderPoseBar();
 
-  const queueBox = document.getElementById('dj-queue-box');
   const queueBtn = document.getElementById('dj-queue-btn');
   const queueList = document.getElementById('dj-queue-list');
-
-  if (djMode !== 'queue') {
-    queueBox.style.display = 'none';
-    return;
-  }
-  queueBox.style.display = 'block';
 
   queueList.innerHTML = '';
   if (djQueue.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'dj-queue-empty';
-    empty.textContent = 'Personne en attente.';
+    empty.textContent = 'Personne d’autre pour l’instant.';
     queueList.appendChild(empty);
   } else {
     djQueue.forEach((id, i) => {
@@ -1457,17 +1435,11 @@ function renderDjModeUI() {
   }
 
   const amIDJ = selfId === myDjId;
-  const amInQueue = djQueue.includes(selfId);
-
+  queueBtn.style.display = amIDJ ? 'block' : 'none';
   if (amIDJ) {
     queueBtn.textContent = '⏭ Passer la main';
+    queueBtn.disabled = djQueue.length === 0;
     queueBtn.onclick = () => socket.emit('next-dj');
-  } else if (amInQueue) {
-    queueBtn.textContent = 'Quitter la file';
-    queueBtn.onclick = () => socket.emit('leave-dj-queue');
-  } else {
-    queueBtn.textContent = '🎧 Rejoindre la file';
-    queueBtn.onclick = () => socket.emit('join-dj-queue');
   }
 }
 
