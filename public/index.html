@@ -1158,9 +1158,16 @@ socket.on('you-were-pushed', ({ x, y }) => {
 // monde un peu à l'avance (dropAt dans le futur) pour que ça se déclenche
 // exactement au même instant chez tout le monde.
 let strobeInterval = null;
+// Fenêtre d'activation des canons à CO2 montés sur la structure : exactement
+// 4 secondes à chaque drop, cf. drawCo2Bursts plus bas (rendu) — on réutilise
+// le même événement serveur que le stroboscope, déjà synchronisé (dropAt).
+let co2BurstStartAt = 0;
+let co2BurstEndAt = 0;
 socket.on('music-drop', ({ dropAt, durationMs, color, intensity }) => {
   const delay = Math.max(0, dropAt - serverNow());
   setTimeout(() => triggerStrobe(durationMs || 1400, color || '#ffffff', intensity != null ? intensity : 0.92), delay);
+  co2BurstStartAt = dropAt;
+  co2BurstEndAt = dropAt + 4000;
 });
 // Intensité et cadence volontairement limitées (cf. STROBE_PEAK_MAX / demi-
 // période ci-dessous) : un stroboscope plein écran, très lumineux et rapide
@@ -1718,6 +1725,8 @@ function drawBackground(t, pulseEnv) {
   else if (currentDecor === 'mainstage_electro') drawMainstageElectro(theme, t);
   else drawGenericStageBackdrop(theme);
 
+  drawTrussStructure(theme, t, pulseEnv || 0);
+
   drawDjBigScreen(t, pulseEnv || 0);
 
   drawStagePlatform(theme);
@@ -2167,6 +2176,186 @@ function drawCrowdBarrier() {
   ctx.moveTo(0, topY - 2);
   ctx.lineTo(W, topY - 2);
   ctx.stroke();
+}
+
+// --- Structure métallique (truss) façon vrai festival, commune aux 6 décors :
+// placée le plus haut possible, sur toute la largeur de la salle, pour
+// accrocher les lyres beam/wash, les lasers et les canons CO2 (cf. plus bas).
+// Géométrie centralisée ici pour que le rendu statique (drawTrussStructure)
+// et les faisceaux animés (drawTrussLights, cf. section effets lumineux)
+// restent toujours parfaitement alignés sur les mêmes points d'accroche.
+function trussBounds() {
+  const trussY = Math.max(16, H * 0.028);
+  const xLeft = W * 0.035;
+  const xRight = W * 0.965;
+  const cx = W / 2;
+  const halfSpan = cx - xLeft;
+  return { trussY, xLeft, xRight, cx, halfSpan };
+}
+
+// Emplacement de chaque projecteur accroché à la structure. Du centre vers
+// l'extérieur, sur chaque côté (symétrique) : laser, canon CO2, puis la
+// rangée de lyres wash/beam/beam/beam/beam/wash — même logique qu'une vraie
+// fiche de patch de festival, avec les wash qui encadrent les beam.
+function trussFixturePositions() {
+  const { trussY, cx, halfSpan } = trussBounds();
+  const headFracs = [
+    { frac: 0.34, type: 'wash' },
+    { frac: 0.47, type: 'beam' },
+    { frac: 0.60, type: 'beam' },
+    { frac: 0.73, type: 'beam' },
+    { frac: 0.86, type: 'beam' },
+    { frac: 0.97, type: 'wash' },
+  ];
+  const movingHeads = [];
+  [-1, 1].forEach(side => {
+    headFracs.forEach((f, i) => {
+      const x = cx + side * f.frac * halfSpan;
+      const drop = f.type === 'wash' ? 20 : 15;
+      movingHeads.push({ x, y: trussY + drop, side, type: f.type, seed: (side > 0 ? i : i + 100) * 17.3 });
+    });
+  });
+
+  const lasers = [-1, 1].map((side, i) => ({ x: cx + side * 0.08 * halfSpan, y: trussY + 12, side, seed: i * 53.1 + 7 }));
+  const co2 = [-1, 1].map((side, i) => ({ x: cx + side * 0.20 * halfSpan, y: trussY + 12, side, seed: i * 29.7 }));
+
+  return { trussY, cx, halfSpan, movingHeads, lasers, co2 };
+}
+
+// Housing (corps) statique d'une lyre beam/wash : bras de fixation vers la
+// structure + caisson sombre + lentille. Les wash sont plus larges/courtes
+// (flood diffus), les beam plus fines/longues (faisceau serré), comme du
+// vrai matériel de scène.
+function drawMovingHeadHousing(h) {
+  const isWash = h.type === 'wash';
+  const bodyW = isWash ? 15 : 10;
+  const bodyH = isWash ? 15 : 18;
+  ctx.save();
+  ctx.translate(h.x, h.y);
+  ctx.strokeStyle = '#20242b';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, -12);
+  ctx.lineTo(0, 0);
+  ctx.stroke();
+  ctx.fillStyle = '#1c1f26';
+  roundRect(ctx, -bodyW / 2, 0, bodyW, bodyH, isWash ? 6 : 4);
+  ctx.fill();
+  strokeOutline(ctx, '#1c1f26', 1.4);
+  ctx.fillStyle = '#4a5058';
+  ctx.beginPath();
+  ctx.arc(0, bodyH * 0.6, bodyW * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Housing statique d'un projecteur laser (petit boîtier plat + lentille noire).
+function drawLaserProjectorHousing(l) {
+  ctx.save();
+  ctx.translate(l.x, l.y);
+  ctx.fillStyle = '#15171c';
+  roundRect(ctx, -12, 0, 24, 13, 4);
+  ctx.fill();
+  strokeOutline(ctx, '#15171c', 1.4);
+  ctx.fillStyle = '#0c0d10';
+  ctx.beginPath();
+  ctx.arc(0, 9, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Housing statique d'un canon à CO2 accroché à la structure, buse vers le bas.
+function drawCo2CannonHousing(c) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.fillStyle = '#2a2e35';
+  roundRect(ctx, -7, 0, 14, 22, 3);
+  ctx.fill();
+  strokeOutline(ctx, '#2a2e35', 1.4);
+  ctx.fillStyle = '#12141a';
+  roundRect(ctx, -4, 20, 8, 8, 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Rendu statique de la structure elle-même : palans/câbles vers le plafond,
+// poutre "box truss" (deux rails + treillis en zigzag + rivets, façon vraie
+// structure alu de festival) sur toute la largeur, et les housings de tous
+// les projecteurs qui y sont accrochés. Appelée une fois par frame depuis
+// drawBackground, sur les 6 décors (aucune scène n'y échappe).
+function drawTrussStructure(theme, t, pulseEnv) {
+  const { trussY, xLeft, xRight, cx, halfSpan } = trussBounds();
+  const pos = trussFixturePositions();
+  const steel = '#3a3f47';
+  const steelLight = '#6b7280';
+  const steelDark = '#20242b';
+
+  // câbles/palans de suspension, répartis symétriquement jusqu'au plafond
+  const hangXs = [cx, cx - 0.35 * halfSpan, cx + 0.35 * halfSpan, cx - 0.7 * halfSpan, cx + 0.7 * halfSpan, cx - 0.97 * halfSpan, cx + 0.97 * halfSpan];
+  ctx.strokeStyle = 'rgba(20,20,26,0.55)';
+  ctx.lineWidth = 2;
+  hangXs.forEach(x => {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, trussY - 7);
+    ctx.stroke();
+    ctx.fillStyle = steelDark;
+    roundRect(ctx, x - 6, trussY - 16, 12, 12, 2);
+    ctx.fill();
+  });
+
+  // poutre principale façon "box truss" : deux rails + treillis en zigzag
+  const railGap = 15;
+  const topRailY = trussY - railGap / 2;
+  const botRailY = trussY + railGap / 2;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(xLeft, botRailY + 2, xRight - xLeft, 5);
+
+  ctx.strokeStyle = steel;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  let up = true;
+  for (let x = xLeft; x <= xRight; x += 17) {
+    ctx.lineTo(x, up ? topRailY : botRailY);
+    up = !up;
+  }
+  ctx.stroke();
+
+  [topRailY, botRailY].forEach(y => {
+    ctx.strokeStyle = steelDark;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(xLeft, y);
+    ctx.lineTo(xRight, y);
+    ctx.stroke();
+    ctx.strokeStyle = steelLight;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(xLeft, y - 1);
+    ctx.lineTo(xRight, y - 1);
+    ctx.stroke();
+  });
+
+  ctx.fillStyle = steelLight;
+  for (let x = xLeft; x <= xRight; x += 34) {
+    ctx.beginPath();
+    ctx.arc(x, topRailY, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x, botRailY, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  [xLeft, xRight].forEach(x => {
+    ctx.fillStyle = steelDark;
+    roundRect(ctx, x - 4, topRailY - 3, 8, railGap + 6, 2);
+    ctx.fill();
+  });
+
+  pos.movingHeads.forEach(h => drawMovingHeadHousing(h));
+  pos.lasers.forEach(l => drawLaserProjectorHousing(l));
+  pos.co2.forEach(c => drawCo2CannonHousing(c));
 }
 
 // --- Mainstage "Temple" : façade antique, colonnade, tours à casques et torches ---
@@ -3595,6 +3784,7 @@ function loop(t) {
     ctx.translate(jx, jy);
   }
   drawBackground(t, shakeEnv);
+  drawTrussLights(t, shakeEnv);
   drawLightEffectsBackground(t);
   drawDiscoTiles(t);
   drawRoundItems(t);
@@ -3908,6 +4098,174 @@ function drawSmokeCannonEffect(t, power, speed, smoke) {
     // buse du canon, au sol
     ctx.fillStyle = '#2a2438';
     roundRect(ctx, originX - 10, baseY - 4, 20, 11, 3);
+    ctx.fill();
+  });
+}
+
+// --- Faisceaux animés de la structure métallique (truss) : toujours présents
+// (pas un effet activable/désactivable par le DJ, contrairement à
+// drawLightEffectsBackground plus haut — une vraie structure de festival a
+// ses lyres/lasers allumés en continu), mais réactifs à la musique via
+// pulseEnv comme le reste du décor. Les housings statiques sont dessinés par
+// drawTrussStructure (cf. plus haut, dans drawBackground) ; ici uniquement
+// les faisceaux/lumière, dessinés par-dessus le reste de la scène (cf. loop).
+// Variations toujours en douceur (sinus), jamais de clignotement dur, pour
+// rester cohérent avec les contraintes d'accessibilité de tout le jeu
+// (cf. STROBE_PEAK_MAX / FLASH_ALPHA_MAX plus bas).
+function drawTrussLights(t, pulseEnv) {
+  const pos = trussFixturePositions();
+  const env = 0.35 + 0.65 * Math.max(0, Math.min(1, pulseEnv || 0));
+
+  pos.movingHeads.forEach(h => drawMovingHeadBeam(h, t, env));
+  pos.lasers.forEach((l, li) => drawTrussLaserProjector(l, t, env, li));
+  drawCo2Bursts(pos.co2, t);
+}
+
+// Lyre motorisée (beam ou wash) : léger balayage pan/tilt individuel (sinus
+// lents, déphasés par lyre pour un effet de vague plutôt que synchronisé), et
+// couleur qui varie en continu (cycle de teinte façon roue RGBA/CMYK) —
+// jamais deux lyres exactement dans la même phase, comme un vrai show.
+function drawMovingHeadBeam(h, t, env) {
+  const isWash = h.type === 'wash';
+  const hue = (t / 45 + h.seed * 23) % 360;
+  const panBase = Math.sin(t / 2600 + h.seed) * (isWash ? 0.5 : 0.8);
+  const tiltPulse = Math.sin(t / 900 + h.seed * 1.7) * 0.15;
+  const angle = Math.PI / 2 + panBase + tiltPulse;
+  const flicker = 0.7 + 0.3 * Math.sin(t / 500 + h.seed * 2.3);
+  const alpha = Math.min(1, env * flicker);
+  if (alpha < 0.05) return;
+
+  if (isWash) {
+    // faisceau large et diffus (flood), façon vraie lyre wash
+    const len = H * 0.32;
+    const spread = 0.5;
+    const a1 = angle - spread / 2, a2 = angle + spread / 2;
+    const x1 = h.x + Math.cos(a1) * len, y1 = h.y + Math.sin(a1) * len;
+    const x2 = h.x + Math.cos(a2) * len, y2 = h.y + Math.sin(a2) * len;
+    const grad = ctx.createRadialGradient(h.x, h.y, 0, h.x, h.y, len);
+    grad.addColorStop(0, `hsla(${hue.toFixed(0)},90%,62%,${0.32 * alpha})`);
+    grad.addColorStop(1, `hsla(${hue.toFixed(0)},90%,62%,0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(h.x, h.y);
+    ctx.lineTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // faisceau serré et long (beam), façon vraie lyre beam
+    const len = H * 0.62;
+    const x2 = h.x + Math.cos(angle) * len;
+    const y2 = h.y + Math.sin(angle) * len;
+    const grad = ctx.createLinearGradient(h.x, h.y, x2, y2);
+    grad.addColorStop(0, `hsla(${hue.toFixed(0)},95%,65%,${0.85 * alpha})`);
+    grad.addColorStop(1, `hsla(${hue.toFixed(0)},95%,65%,0)`);
+    ctx.save();
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(h.x, h.y);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.fillStyle = `hsla(${hue.toFixed(0)},95%,72%,${alpha})`;
+  ctx.beginPath();
+  ctx.arc(h.x, h.y, isWash ? 3.4 : 2.6, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Projecteur laser : 10 faisceaux indépendants par projecteur, chacun avec
+// son propre cycle d'intensité (montée/descente en douceur, jamais un
+// flash net) de sorte que les 10 ne sont jamais tous allumés en même temps —
+// couleur, rythme et intensité varient avec la musique (env, dérivé de
+// pulseEnv) exactement comme demandé.
+function drawTrussLaserProjector(l, t, env, li) {
+  const beamCount = 10;
+  const len = H * 1.05;
+  for (let i = 0; i < beamCount; i++) {
+    const seed = l.seed + i * 7.3;
+    const cycle = (Math.sin(t / 640 + seed) + 1) / 2; // 0..1, propre à ce faisceau
+    const onAmount = Math.pow(Math.max(0, (cycle - 0.35) / 0.65), 1.4); // montée/descente douces
+    const alpha = onAmount * env;
+    if (alpha < 0.04) continue;
+
+    const hue = (t / 55 + seed * 31 + li * 180) % 360;
+    const spreadAngle = -0.9 + (i / (beamCount - 1)) * 1.8; // éventail des 10 sorties du projecteur
+    const wobble = Math.sin(t / 1400 + seed * 1.9) * 0.12;
+    const angle = Math.PI / 2 + spreadAngle * 0.55 + wobble;
+
+    const x2 = l.x + Math.cos(angle) * len;
+    const y2 = l.y + Math.sin(angle) * len;
+    const grad = ctx.createLinearGradient(l.x, l.y, x2, y2);
+    grad.addColorStop(0, `hsla(${hue.toFixed(0)},100%,62%,${0.8 * alpha})`);
+    grad.addColorStop(1, `hsla(${hue.toFixed(0)},100%,62%,0)`);
+    ctx.save();
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(l.x, l.y);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.arc(l.x, l.y, 2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Enveloppe (0..1) de la bouffée de CO2 en cours : montée/descente douces sur
+// une fenêtre de 4 secondes pile, ancrée sur le prochain/dernier drop reçu
+// via l'évènement serveur music-drop (cf. plus haut, co2BurstStartAt/EndAt).
+function co2BurstEnvelope() {
+  if (!co2BurstEndAt) return 0;
+  const now = serverNow();
+  if (now < co2BurstStartAt || now > co2BurstEndAt) return 0;
+  const dur = co2BurstEndAt - co2BurstStartAt;
+  const elapsed = now - co2BurstStartAt;
+  const attack = Math.min(1, elapsed / 220);
+  const release = Math.min(1, (dur - elapsed) / 260);
+  return Math.max(0, Math.min(1, Math.min(attack, release)));
+}
+
+// Bouffées de CO2 : déclenchées 4 secondes à chaque drop (moment fort) de la
+// musique, tombant depuis les canons montés sur la structure jusqu'au niveau
+// de la barrière de sécurité — jamais plus bas, pour ne jamais empiéter sur
+// la piste ni gêner le jeu.
+function drawCo2Bursts(co2Positions, t) {
+  const burst = co2BurstEnvelope();
+  if (burst <= 0.01) return;
+  const { topY: barrierTopY } = crowdBarrierBounds();
+  const rgb = { r: 235, g: 240, b: 250 };
+
+  co2Positions.forEach((c, oi) => {
+    const nozzleY = c.y + 14;
+    const travel = barrierTopY - nozzleY;
+    if (travel <= 0) return;
+    const puffs = 22;
+    for (let i = 0; i < puffs; i++) {
+      const seed = oi * 41.3 + i * 9.7;
+      const tau = (((t / 1000) + seed) % 0.65) / 0.65; // 0..1, jet dense et rapide
+      const fall = nozzleY + tau * travel;
+      if (fall > barrierTopY) continue; // ne descend jamais sous la barrière (pas sur la piste)
+      const wobble = Math.sin(seed + tau * 4) * (6 + tau * 10);
+      const x = c.x + wobble;
+      const size = 10 + tau * 30;
+      const alpha = Math.max(0, 1 - tau * 0.6) * 0.8 * burst;
+      if (alpha < 0.03) continue;
+      const grad = ctx.createRadialGradient(x, fall, 0, x, fall, size);
+      grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`);
+      grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, fall, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = `rgba(255,255,255,${0.55 * burst})`;
+    ctx.beginPath();
+    ctx.arc(c.x, nozzleY, 5, 0, Math.PI * 2);
     ctx.fill();
   });
 }
