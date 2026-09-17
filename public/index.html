@@ -3824,7 +3824,7 @@ function drawLightEffectsBackground(t) {
   const le = getEffectiveLightEffects();
   if (!le) return;
   if (le.laser.on) drawLaserEffect(t, le.power, le.speed, le.laser);
-  if (le.ledbar.on) drawLedBarEffect(t, le.power, le.speed, le.ledbar);
+  drawLedBarEffect(t, le.power, le.speed, le.ledbar);
   if (le.fireballs.on) drawFireballsEffect(t, le.power, le.speed, le.fireballs);
   if (le.sparks.on) drawSparksEffect(t, le.power, le.speed, le.sparks);
   if (le.smoke && le.smoke.on) drawSmokeCannonEffect(t, le.power, le.speed, le.smoke);
@@ -3928,10 +3928,13 @@ function drawLaserEffect(t, power, speed, laser) {
 }
 
 // Rangée de 30 spots LED rectangulaires alignés juste au-dessus de la barrière du
-// public, sur toute la largeur (même niveau que la scène) : une vague de luminosité
-// balaie la rangée, en rythme avec la musique (comme les autres effets lumineux).
+// public, sur toute la largeur (même niveau que la scène) : toujours visibles (boîtier
+// gris/noir même éteints, comme du vrai matériel), et une vague de luminosité colorée
+// balaie la rangée quand ils sont allumés, en rythme avec la musique (comme les autres
+// effets lumineux).
 function drawLedBarEffect(t, power, speed, ledbar) {
-  const rgb = hexToRgb(ledbar.color || '#ff5fa3');
+  const on = !!(ledbar && ledbar.on);
+  const rgb = hexToRgb((ledbar && ledbar.color) || '#ff5fa3');
   const { topY: fenceTopY } = crowdBarrierBounds();
   const y = fenceTopY - 15;
   const count = 30;
@@ -3946,27 +3949,34 @@ function drawLedBarEffect(t, power, speed, ledbar) {
     const x = marginX + i * gap;
     const base = reactive ? vjLaserPhase * 1.8 : (t / 700) * speed;
     const wave = (Math.sin(base - i * 0.35) + 1) / 2;
-    const intensity = Math.max(0.18, wave) * power;
+    const intensity = on ? Math.max(0.18, wave) * power : 0;
 
     ctx.save();
-    // boîtier du spot
+    // boîtier du spot : toujours visible, gris/noir, même quand le spot est éteint
     ctx.fillStyle = '#15131c';
     roundRect(ctx, x - fixtureW / 2 - 2, y - fixtureH / 2 - 2, fixtureW + 4, fixtureH + 4, 2);
     ctx.fill();
 
-    // halo diffus
-    const glow = ctx.createRadialGradient(x, y, 0, x, y, fixtureW * 1.6);
-    glow.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${0.5 * intensity})`);
-    glow.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(x, y, fixtureW * 1.6, 0, Math.PI * 2);
-    ctx.fill();
+    if (on) {
+      // halo diffus
+      const glow = ctx.createRadialGradient(x, y, 0, x, y, fixtureW * 1.6);
+      glow.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${0.5 * intensity})`);
+      glow.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(x, y, fixtureW * 1.6, 0, Math.PI * 2);
+      ctx.fill();
 
-    // face lumineuse rectangulaire du spot
-    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.55 + 0.45 * intensity})`;
-    roundRect(ctx, x - fixtureW / 2, y - fixtureH / 2, fixtureW, fixtureH, 1.5);
-    ctx.fill();
+      // face lumineuse rectangulaire du spot
+      ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.55 + 0.45 * intensity})`;
+      roundRect(ctx, x - fixtureW / 2, y - fixtureH / 2, fixtureW, fixtureH, 1.5);
+      ctx.fill();
+    } else {
+      // spot éteint : face grise/noire mate, bien visible sur la scène
+      ctx.fillStyle = '#3a3a42';
+      roundRect(ctx, x - fixtureW / 2, y - fixtureH / 2, fixtureW, fixtureH, 1.5);
+      ctx.fill();
+    }
     ctx.restore();
   }
 }
