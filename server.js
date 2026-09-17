@@ -777,7 +777,7 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
-const validLaserStyles = ['rotating', 'fan', 'cross', 'sweep', 'converge', 'chase'];
+const validLaserStyles = ['rotating', 'fan', 'cross', 'sweep', 'converge', 'chase', 'burst', 'flash'];
 function isHexColor(c) {
   return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
 }
@@ -858,33 +858,54 @@ function currentDropSectionBoost(room) {
   return 0;
 }
 
+// Formats de laser préférés à l'approche/pendant un drop (rafale/flash en
+// plus, pour une vraie salve façon plusieurs lasers qui claquent d'un coup —
+// même logique que côté client, cf. DROP_LASER_STYLES) et couleurs par
+// séquence (plus froid/posé au calme, plus chaud en montée, franc et
+// éclatant sur le drop) — même esprit que SECTION_COLOR_POOLS côté client,
+// pour qu'un lien YouTube ait lui aussi une couleur qui suit le morceau.
+const DROP_PREFERRED_LASER_STYLES = ['burst', 'flash', 'fan', 'chase'];
+const AUTO_LIGHT_COLOR_POOLS = {
+  normal: AUTO_LIGHT_COLORS,
+  buildup: ['#ffd35a', '#ff8c3d', '#ff5fa3', '#ffb84d'],
+  drop: ['#ffffff', '#ff4d6d', '#ff5fa3', '#5ad1ff', '#4ade80'],
+};
+
 // Tire un nouvel état d'effets auto, biaisé par la séquence en cours
 // (cf. currentDropSectionBoost) : plus intense/rapide à l'approche d'un drop
-// et pendant lui, plus calme sinon (couplet/normal), pour que la vitesse des
-// effets suive vraiment l'intensité du morceau plutôt qu'un simple hasard.
+// et pendant lui, plus calme sinon (couplet/normal), pour que la vitesse ET
+// la couleur des effets suivent vraiment l'intensité du morceau plutôt qu'un
+// simple hasard indépendant.
 function generateAutoLightEffects(room) {
   const boost = currentDropSectionBoost(room);
+  const colorPool = boost > 0.75 ? AUTO_LIGHT_COLOR_POOLS.drop
+    : boost > 0.15 ? AUTO_LIGHT_COLOR_POOLS.buildup
+    : AUTO_LIGHT_COLOR_POOLS.normal;
+  const laserStyle = boost > 0.4 ? pick(DROP_PREFERRED_LASER_STYLES) : pick(validLaserStyles);
   return {
-    flash: { on: Math.random() < 0.7, color: pick(AUTO_LIGHT_COLORS) },
+    flash: { on: Math.random() < 0.7, color: pick(colorPool) },
     laser: {
       on: Math.random() < 0.6 || boost > 0.5,
-      color: pick(AUTO_LIGHT_COLORS),
+      color: pick(colorPool),
       count: Math.min(8, 2 + Math.floor(Math.random() * 6) + Math.round(boost * 3)),
-      style: pick(validLaserStyles)
+      style: laserStyle
     },
     fireballs: {
       on: Math.random() < 0.5 || boost > 0.6,
-      color: pick(AUTO_LIGHT_COLORS),
+      color: pick(colorPool),
       count: pick([2, 4, 6, 8])
     },
     sparks: {
       on: Math.random() < 0.5 || boost > 0.4,
-      color: pick(AUTO_LIGHT_COLORS),
+      color: pick(colorPool),
       count: 4 + Math.floor(Math.random() * 6),
       intensity: Math.min(1, 0.3 + Math.random() * 0.7 + boost * 0.3)
     },
-    discoball: { on: Math.random() < 0.8, color: pick(AUTO_LIGHT_COLORS) },
-    smoke: { on: Math.random() < 0.35 || boost > 0.7, color: pick(AUTO_LIGHT_COLORS), count: 2 + Math.floor(Math.random() * 5) },
+    discoball: { on: Math.random() < 0.8, color: pick(colorPool) },
+    // "En masse" vraiment sur le drop, jamais en couplet/montée : plus de
+    // tirage indépendant au hasard, seul un boost fort (quasi/au moment du
+    // drop) déclenche la fumée, et tous les canons d'un coup à ce moment-là.
+    smoke: { on: boost > 0.75, color: '#cfd6e6', count: boost > 0.75 ? 7 : (2 + Math.floor(Math.random() * 5)) },
     power: Math.min(1, 0.35 + Math.random() * 0.35 + boost * 0.4),
     speed: Math.min(3, 0.55 + Math.random() * 0.8 + boost * 1.5),
     autoMode: true
