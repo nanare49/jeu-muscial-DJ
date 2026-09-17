@@ -269,8 +269,10 @@ function getOrCreateRoom(roomId) {
       // null quand c'est un lien YouTube ou qu'aucun morceau n'est encore chargé.
       uploadedTrackFilePath: null,
       creatorId: null,
-      djMode: 'fixed', // 'fixed' (le créateur reste DJ) ou 'queue' (file d'attente façon plug.dj)
-      djQueue: [],      // liste d'ids en attente de leur tour, en mode 'queue'
+      // File d'attente OBLIGATOIRE : tout festivalier qui n'est pas le DJ actuel
+      // y est automatiquement (cf. 'join' et advanceDjQueue) — personne ne
+      // choisit d'y entrer ou d'en sortir, chacun joue son tour à la suite.
+      djQueue: [],
       // Passage DJ en cours : remis à zéro à chaque nouveau passage (cf. settleDjTurn).
       // `trackStarted` : vrai dès que ce DJ a lancé un morceau pendant son passage —
       // sert (en mode file d'attente, avec du monde en attente) à l'empêcher d'en
@@ -407,7 +409,11 @@ io.on('connection', (socket) => {
     const isFirstInRoom = Object.keys(room.players).length === 0;
     if (isFirstInRoom) {
       room.djId = socket.id; // le premier arrivant devient le DJ de la salle
-      room.creatorId = socket.id; // lui seul pourra choisir le mode DJ unique / file d'attente
+      room.creatorId = socket.id;
+    } else if (!room.djQueue.includes(socket.id)) {
+      // Tour obligatoire : quiconque arrive et n'est pas déjà le DJ rejoint
+      // automatiquement la file, sans rien avoir à faire.
+      room.djQueue.push(socket.id);
     }
 
     const playerIndex = Object.keys(room.players).length;
@@ -438,7 +444,6 @@ io.on('connection', (socket) => {
       currentVideo: room.currentVideo,
       djId: room.djId,
       creatorId: room.creatorId,
-      djMode: room.djMode,
       djQueue: room.djQueue,
       canStartNewTrack: djCanStartNewTrack(room),
       lightEffects: room.lightEffects,
@@ -456,6 +461,9 @@ io.on('connection', (socket) => {
     });
 
     socket.to(currentRoomId).emit('player-joined', { id: socket.id, player: sanitizePlayerForClients(player) });
+    // Prévient tout le monde que la file d'attente (obligatoire) vient de
+    // s'allonger avec ce nouvel arrivant.
+    if (!isFirstInRoom) socket.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
   });
 
   socket.on('move', (pos) => {
@@ -518,55 +526,26 @@ io.on('connection', (socket) => {
     io.to(currentRoomId).emit('player-bubble-size', { id: socket.id, size: p.bubbleSize });
   });
 
-  // Le créateur de la salle choisit : DJ unique (par défaut) ou file d'attente façon plug.dj
-  socket.on('set-dj-mode', (mode) => {
-    if (!currentRoomId) return;
-    const room = rooms.get(currentRoomId);
-    if (!room || socket.id !== room.creatorId) return;
-    room.djMode = mode === 'queue' ? 'queue' : 'fixed';
-    if (room.djMode === 'fixed') room.djQueue = [];
-    io.to(currentRoomId).emit('dj-mode-changed', { mode: room.djMode, queue: room.djQueue });
-    emitDjTurnState(room, currentRoomId);
-  });
-
-  socket.on('join-dj-queue', () => {
-    if (!currentRoomId) return;
-    const room = rooms.get(currentRoomId);
-    if (!room || room.djMode !== 'queue') return;
-    if (socket.id === room.djId) return; // déjà DJ, pas besoin de faire la queue
-    if (!room.djQueue.includes(socket.id)) room.djQueue.push(socket.id);
-    io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
-    emitDjTurnState(room, currentRoomId);
-  });
-
-  socket.on('leave-dj-queue', () => {
-    if (!currentRoomId) return;
-    const room = rooms.get(currentRoomId);
-    if (!room) return;
-    room.djQueue = room.djQueue.filter(id => id !== socket.id);
-    io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
-    emitDjTurnState(room, currentRoomId);
-  });
-
   // Le DJ actuel décide de passer la main tout de suite (bouton "Passer la main") :
-  // on solde d'abord son passage (notes -> XP/pièces), puis on avance la file.
+  // on solde d'abord son passage (notes -> XP/pièces), puis on avance la file —
+  // ce qui le remet lui-même en fin de file (rotation obligatoire et continue).
   socket.on('next-dj', () => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
-    if (!room || room.djMode !== 'queue' || socket.id !== room.djId) return;
+    if (!room || socket.id !== room.djId) return;
     settleDjTurn(room, currentRoomId);
     advanceDjQueue(room, currentRoomId);
   });
 
-  // Une vidéo vient de se terminer chez le DJ actuel : on solde son passage dans
-  // tous les cas (même en mode DJ unique, où il reste DJ mais touche quand même
-  // la récompense de ce morceau), et on avance la file seulement en mode 'queue'.
+  // Une vidéo vient de se terminer chez le DJ actuel : on solde son passage,
+  // puis la main passe automatiquement au joueur suivant dans la file — chacun
+  // joue son tour obligatoirement, personne n'a besoin de s'inscrire.
   socket.on('video-ended', () => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
     if (!room || socket.id !== room.djId) return;
     settleDjTurn(room, currentRoomId);
-    if (room.djMode === 'queue') advanceDjQueue(room, currentRoomId);
+    advanceDjQueue(room, currentRoomId);
   });
 
   // Achat d'un objet de la boutique avec les pièces gagnées en jouant.
@@ -759,25 +738,29 @@ io.on('connection', (socket) => {
       const leavingPlayer = room.players[socket.id];
       if (leavingPlayer && leavingPlayer.effectTimer) clearTimeout(leavingPlayer.effectTimer);
       delete room.players[socket.id];
+      const wasInQueue = room.djQueue.includes(socket.id);
       room.djQueue = room.djQueue.filter(id => id !== socket.id);
       io.to(currentRoomId).emit('player-left', { id: socket.id });
+      if (wasInQueue) io.to(currentRoomId).emit('dj-queue-changed', room.djQueue);
 
-      // si le DJ partait, on transmet le rôle : à la file d'attente si elle existe,
-      // sinon à n'importe qui d'autre encore présent
+      // si le DJ partait, la main passe automatiquement au prochain de la file
+      // (rotation obligatoire) ; sans personne en attente, à n'importe qui
+      // d'autre encore présent. Le DJ qui vient de partir n'est jamais remis
+      // dans la file (requeuePrevious: false), puisqu'il n'est plus là.
       if (room.djId === socket.id) {
-        const advanced = room.djMode === 'queue' && advanceDjQueue(room, currentRoomId);
+        const advanced = advanceDjQueue(room, currentRoomId, { requeuePrevious: false });
         if (!advanced) {
           const remainingIds = Object.keys(room.players);
           room.djId = remainingIds.length > 0 ? remainingIds[0] : null;
           if (room.djId) {
+            room.djQueue = room.djQueue.filter(id => id !== room.djId);
             room.players[room.djId].bubbleSize = Math.max(room.players[room.djId].bubbleSize, 1.2);
+            room.lightEffects.autoMode = true;
+            io.to(currentRoomId).emit('light-effects-changed', room.lightEffects);
             io.to(currentRoomId).emit('dj-changed', room.djId);
           }
         }
       }
-
-      // si le créateur partait, la salle n'a plus personne pour changer le mode DJ —
-      // ce n'est pas grave, le mode déjà choisi continue de s'appliquer tel quel
 
       cleanupRoomIfEmpty(currentRoomId);
     }
@@ -942,13 +925,11 @@ function settleDjTurn(room, roomId) {
 }
 
 // Vrai si le DJ actuel a le droit de lancer un (nouveau) morceau : toujours
-// vrai en mode DJ unique ou si la file d'attente est vide, mais faux en mode
-// file d'attente dès que ce DJ a déjà lancé un morceau pendant son passage et
-// qu'au moins une personne attend son tour — il doit d'abord céder la main
-// (cf. "next-dj" ou la fin naturelle du morceau) plutôt que d'en relancer un
-// autre indéfiniment.
+// vrai si la file d'attente est vide (il est seul dans la salle), mais faux
+// dès qu'il a déjà lancé un morceau pendant son passage et qu'au moins une
+// personne attend son tour — il doit d'abord terminer son morceau (la main
+// passe alors automatiquement) plutôt que d'en relancer un autre indéfiniment.
 function djCanStartNewTrack(room) {
-  if (room.djMode !== 'queue') return true;
   if (room.djQueue.length === 0) return true;
   return !room.currentDjTurn.trackStarted;
 }
@@ -1308,17 +1289,31 @@ function applyItemEffect(room, roomId, playerId, type) {
   }
 }
 
-function advanceDjQueue(room, roomId) {
+// Fait passer la main au prochain de la file d'attente (rotation obligatoire).
+// Par défaut, celui qui vient de jouer retourne en fin de file pour rejouer
+// plus tard (options.requeuePrevious: false quand il vient de se déconnecter
+// et n'est donc plus là pour rejouer). Renvoie false si personne n'attend
+// (le DJ actuel garde alors la main, faute d'autre joueur dans la salle).
+function advanceDjQueue(room, roomId, options) {
+  const requeuePrevious = !options || options.requeuePrevious !== false;
   if (room.djQueue.length === 0) return false;
   const previousDjId = room.djId;
   const nextDjId = room.djQueue.shift();
   room.djId = nextDjId;
+
+  if (requeuePrevious && previousDjId && room.players[previousDjId] && !room.djQueue.includes(previousDjId)) {
+    room.djQueue.push(previousDjId); // chacun joue son tour, puis retourne en fin de file
+  }
 
   // le nouveau DJ garde sa position et sa pose sur la piste, juste une bulle plus grande
   if (room.players[nextDjId]) {
     room.players[nextDjId].bubbleSize = Math.max(room.players[nextDjId].bubbleSize || 1.0, 1.2);
   }
 
+  // Passage de main automatique : les lumières repartent tout de suite en
+  // mode "suit la musique" pour le nouveau DJ, qui n'a rien à régler lui-même.
+  room.lightEffects.autoMode = true;
+  io.to(roomId).emit('light-effects-changed', room.lightEffects);
   io.to(roomId).emit('dj-changed', room.djId);
   io.to(roomId).emit('dj-queue-changed', room.djQueue);
   return true;
