@@ -231,8 +231,10 @@
     pointer-events: none;
   }
 
-  #shop-toggle-btn {
-    position: fixed; left: 16px; bottom: 16px; z-index: 20;
+  #shop-toggle-btn, #dance-toggle-btn {
+    /* z-index plus haut que les cadres (20) : les boutons "menu" restent
+       cliquables meme si un cadre ouvert s'étend jusque dans leur zone. */
+    position: fixed; left: 16px; bottom: 16px; z-index: 25;
     background:
       linear-gradient(var(--panel-tint-strong), var(--panel-tint-strong)),
       var(--mesh);
@@ -240,6 +242,9 @@
     border-radius: 999px; padding: 10px 18px; font-size: 12px; font-weight: 700; cursor: pointer;
     box-shadow: 0 10px 30px rgba(90, 10, 130, 0.35);
   }
+  /* Deux boutons "menu" cote a cote en bas a gauche : ils ouvrent/ferment
+     chacun un cadre replie par defaut, pour laisser la piste de danse libre. */
+  #dance-toggle-btn { left: 150px; }
   #shop-box {
     position: fixed; left: 16px; bottom: 60px; z-index: 20;
     padding: 16px 18px;
@@ -262,7 +267,9 @@
   .shop-item button:disabled { background: rgba(255,255,255,0.12); color: var(--muted); cursor: not-allowed; }
 
   #bottom-bars {
-    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    /* bottom: 70px (et non 20px) pour ne jamais recouvrir les boutons "menu"
+       (boutique / danses & style) juste en dessous, à la même hauteur. */
+    position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
     z-index: 20; display: flex; flex-direction: column; gap: 8px; align-items: center;
   }
   .bar {
@@ -644,13 +651,14 @@
 <div id="strobe-overlay"></div>
 
 <button id="shop-toggle-btn">🛍 Boutique</button>
+<button id="dance-toggle-btn">💃 Danses &amp; style</button>
 <div id="shop-box" style="display:none;">
   <div class="drag-handle" title="Déplacer ce cadre">⠿</div>
   <h2>Boutique</h2>
   <div id="shop-items"></div>
 </div>
 
-<div id="bottom-bars">
+<div id="bottom-bars" style="display:none;">
   <div class="drag-handle" title="Déplacer ce cadre">⠿</div>
   <div class="bar" id="poseBar"></div>
   <div class="bar" id="accessoryBar"></div>
@@ -1603,6 +1611,14 @@ renderShopBox();
 document.getElementById('shop-toggle-btn').addEventListener('click', () => {
   const box = document.getElementById('shop-box');
   box.style.display = box.style.display === 'none' ? 'block' : 'none';
+});
+
+// Le cadre "Danses & style" (poses, accessoires/gadgets, taille de la bulle)
+// reste replié par défaut : il prenait trop de place en permanence au milieu
+// de la piste. On le déplie/replie avec ce bouton, comme la boutique.
+document.getElementById('dance-toggle-btn').addEventListener('click', () => {
+  const box = document.getElementById('bottom-bars');
+  box.style.display = box.style.display === 'none' ? 'flex' : 'none';
 });
 
 document.getElementById('copy-btn').addEventListener('click', () => {
