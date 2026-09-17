@@ -151,9 +151,14 @@ const ITEM_TYPES = {
   security:  { kind: 'malus', emoji: '👮', effect: 'lose_coins' }
 };
 const ITEM_TYPE_KEYS = Object.keys(ITEM_TYPES);
-const ROUND_INITIAL_ITEMS = 7;
-const ROUND_RESPAWN_MIN_MS = 3000;
-const ROUND_RESPAWN_MAX_MS = 6000;
+// Moins d'objets en meme temps sur la piste, mais un rythme d'apparition plus
+// rapide : chaque objet ne reste que ITEM_LIFETIME_MS avant de disparaitre
+// tout seul s'il n'est pas ramasse (cf. spawnItem), puis un autre reapparait
+// vite ailleurs (delai de reapparition raccourci).
+const ROUND_INITIAL_ITEMS = 4;
+const ITEM_LIFETIME_MS = 5000;
+const ROUND_RESPAWN_MIN_MS = 1200;
+const ROUND_RESPAWN_MAX_MS = 2500;
 const STATUS_EFFECT_MS = 5000;
 const ITEM_PICKUP_RADIUS = 0.035;
 const OPPONENT_MAX_RADIUS = 0.35;
@@ -277,7 +282,10 @@ function getOrCreateRoom(roomId) {
       floorMinY: DEFAULT_FLOOR_MIN_Y,
       // Mini-jeu de ramassage d'objets sur la piste, actif pendant qu'un morceau tourne.
       round: {
-        items: {},          // id -> { id, type, x, y }
+        items: {},          // id -> { id, type, x, y } — jamais d'autre champ ici : ces objets sont
+                             // envoyés tels quels aux clients (JSON), donc pas de setTimeout dedans
+                             // (ça faisait planter le serveur, cf. itemTimers ci-dessous).
+        itemTimers: {},      // id -> setTimeout d'auto-disparition (ITEM_LIFETIME_MS), à part des items
         nextItemId: 1,
         discoTiles: [],      // grille de cases lumineuses (cf. buildDiscoGrid)
         active: false,       // true une fois le décompte terminé (les objets sont ramassables)
@@ -458,7 +466,10 @@ io.on('connection', (socket) => {
     p.x = clamp(pos.x, 0, 1);
     p.y = clamp(pos.y, 0, 1);
     socket.to(currentRoomId).emit('player-moved', { id: socket.id, x: p.x, y: p.y });
-    if (room.round.active && socket.id !== room.djId) {
+    // Le DJ n'est plus fige sur une estrade : il se deplace sur la piste comme
+    // n'importe quel festivalier et doit donc pouvoir ramasser lui aussi les
+    // pieces/bonus/malus et les cases disco (avant, il en etait exclu ici).
+    if (room.round.active) {
       checkItemPickup(room, currentRoomId, socket.id, p);
       checkDiscoTilePickup(room, currentRoomId, socket.id, p);
     }
@@ -963,13 +974,41 @@ function randomFloorPosition(room) {
   };
 }
 
-function spawnItem(room) {
+// Cree un objet et programme sa disparition automatique apres
+// ITEM_LIFETIME_MS s'il n'a pas ete ramasse avant (cf. checkItemPickup qui
+// annule ce minuteur en cas de ramassage) : les objets restent peu de temps
+// au sol et un autre reapparait vite ailleurs pour garder un rythme soutenu.
+function spawnItem(room, roomId) {
   const type = ITEM_TYPE_KEYS[Math.floor(Math.random() * ITEM_TYPE_KEYS.length)];
   const id = room.round.nextItemId++;
   const pos = randomFloorPosition(room);
+  // Important : ne JAMAIS ajouter de champ non-JSON (comme un Timeout) sur cet
+  // objet "item" — il est envoyé tel quel aux clients via socket.io, qui plante
+  // (pile d'appels infinie dans hasBinary) si on lui donne un objet circulaire.
   const item = { id, type, x: pos.x, y: pos.y };
   room.round.items[id] = item;
+  room.round.itemTimers[id] = setTimeout(() => {
+    if (!room.round.items[id]) return; // deja ramasse entre-temps
+    delete room.round.items[id];
+    delete room.round.itemTimers[id];
+    io.to(roomId).emit('item-collected', { itemId: id });
+    scheduleItemRespawn(room, roomId);
+  }, ITEM_LIFETIME_MS);
+  room.round.timers.push(room.round.itemTimers[id]);
   return item;
+}
+
+// Programme la reapparition d'un objet ailleurs sur la piste apres un court
+// delai aleatoire, utilise a la fois quand un objet est ramasse et quand il
+// disparait tout seul (expiration).
+function scheduleItemRespawn(room, roomId) {
+  const delay = ROUND_RESPAWN_MIN_MS + Math.random() * (ROUND_RESPAWN_MAX_MS - ROUND_RESPAWN_MIN_MS);
+  const timer = setTimeout(() => {
+    if (rooms.get(roomId) !== room || !room.round.active) return;
+    spawnItem(room, roomId);
+    broadcastRoundItems(room, roomId);
+  }, delay);
+  room.round.timers.push(timer);
 }
 
 function broadcastRoundItems(room, roomId) {
@@ -1069,7 +1108,7 @@ function activateRound(room, roomId) {
     const pl = room.players[pid];
     if (pl.token) pl.roundStartCoins = getOrCreateProfile(pl.token).coins;
   }
-  for (let i = 0; i < ROUND_INITIAL_ITEMS; i++) spawnItem(room);
+  for (let i = 0; i < ROUND_INITIAL_ITEMS; i++) spawnItem(room, roomId);
   buildDiscoGrid(room);
   scheduleDiscoTileTick(room, roomId);
   // rythme simulé pour la vibration/l'assombrissement de la piste, et
@@ -1095,6 +1134,7 @@ function activateRound(room, roomId) {
 function resetRoundState(room, roomId) {
   clearRoundTimers(room);
   room.round.items = {};
+  room.round.itemTimers = {};
   room.round.discoTiles = [];
   room.round.active = false;
   room.round.countdownEndAt = null;
@@ -1127,16 +1167,13 @@ function checkItemPickup(room, roomId, playerId, p) {
     const dx = p.x - item.x, dy = p.y - item.y;
     if (Math.hypot(dx, dy) <= ITEM_PICKUP_RADIUS) {
       p.lastItemPickupAt = now;
+      // ramassé avant expiration : plus besoin du minuteur d'auto-disparition
+      if (room.round.itemTimers[item.id]) clearTimeout(room.round.itemTimers[item.id]);
+      delete room.round.itemTimers[item.id];
       delete room.round.items[item.id];
       io.to(roomId).emit('item-collected', { itemId: item.id });
       applyItemEffect(room, roomId, playerId, item.type);
-      const delay = ROUND_RESPAWN_MIN_MS + Math.random() * (ROUND_RESPAWN_MAX_MS - ROUND_RESPAWN_MIN_MS);
-      const timer = setTimeout(() => {
-        if (rooms.get(roomId) !== room || !room.round.active) return;
-        spawnItem(room);
-        broadcastRoundItems(room, roomId);
-      }, delay);
-      room.round.timers.push(timer);
+      scheduleItemRespawn(room, roomId);
       break; // un seul objet ramassé par mouvement, même si deux se chevauchent
     }
   }
