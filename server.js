@@ -311,7 +311,7 @@ function getOrCreateRoom(roomId) {
         laser: { on: false, color: '#5ad1ff', count: 4, style: 'rotating' },
         fireballs: { on: false, color: '#ff7a3d', count: 2 },
         sparks: { on: false, color: '#ffd35a', count: 4, intensity: 0.6 },
-        discoball: { on: false, color: '#ffffff' },
+        ledbar: { on: false, color: '#ff5fa3' },
         smoke: { on: false, color: '#cfd6e6', count: 4 },
         power: 0.6,
         speed: 1.0,
@@ -817,9 +817,9 @@ function sanitizeLightEffects(payload, previous) {
       count: Number.isFinite(sparksCountRaw) ? clamp(sparksCountRaw, 4, 10) : previous.sparks.count,
       intensity: Number.isFinite(sparksIntensity) ? clamp(sparksIntensity, 0, 1) : previous.sparks.intensity
     },
-    discoball: {
-      on: !!(payload.discoball && payload.discoball.on),
-      color: isHexColor(payload.discoball && payload.discoball.color) ? payload.discoball.color : previous.discoball.color
+    ledbar: {
+      on: !!(payload.ledbar && payload.ledbar.on),
+      color: isHexColor(payload.ledbar && payload.ledbar.color) ? payload.ledbar.color : previous.ledbar.color
     },
     smoke: {
       on: !!smokeIn.on,
@@ -901,7 +901,7 @@ function generateAutoLightEffects(room) {
       count: 4 + Math.floor(Math.random() * 6),
       intensity: Math.min(1, 0.3 + Math.random() * 0.7 + boost * 0.3)
     },
-    discoball: { on: Math.random() < 0.8, color: pick(colorPool) },
+    ledbar: { on: Math.random() < 0.8, color: pick(colorPool) },
     // "En masse" vraiment sur le drop, jamais en couplet/montée : plus de
     // tirage indépendant au hasard, seul un boost fort (quasi/au moment du
     // drop) déclenche la fumée, et tous les canons d'un coup à ce moment-là.
