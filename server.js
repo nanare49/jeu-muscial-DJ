@@ -300,6 +300,12 @@ function getOrCreateRoom(roomId) {
       musicPulse: { bpm: null, anchorAt: null },
       autoLightsRunning: false, // évite de lancer deux boucles d'auto-VJ en parallèle
       musicDropRunning: false, // idem pour la boucle des drops automatiques
+      // Horodatage du prochain "drop" programmé (0 = aucun en vue) : sert à faire
+      // monter en intensité/vitesse les effets auto AVANT le drop (build-up) et
+      // pendant lui, façon vraie régie qui suit les séquences du morceau plutôt
+      // que de tirer une intensité au hasard sans lien avec ce qui joue
+      // (cf. scheduleAutoLightsTick, scheduleMusicDropTick).
+      nextDropAt: 0,
       lightEffects: {
         flash: { on: false, color: '#ff5fa3' },
         laser: { on: false, color: '#5ad1ff', count: 4, style: 'rotating' },
@@ -832,6 +838,59 @@ function sanitizeLightEffects(payload, previous) {
 // La chaîne s'arrête toute seule (ne se reprogramme pas) dès que le round
 // s'arrête ou que le DJ repasse en contrôle manuel.
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// Pour un lien YouTube, le serveur n'a pas accès au vrai son (impossible
+// d'analyser l'audio d'une iframe tierce) : on ne peut donc pas détecter de
+// vraies séquences (couplet/refrain), mais on connaît quand même le seul
+// repère de structure disponible — le prochain "drop" programmé
+// (room.nextDropAt, cf. scheduleMusicDropTick). On s'en sert pour faire
+// monter l'intensité/la vitesse à l'approche du drop (build-up) et pendant
+// lui, plutôt qu'un tirage complètement indépendant de ce qui joue.
+function currentDropSectionBoost(room) {
+  if (!room.nextDropAt) return 0;
+  const untilDrop = room.nextDropAt - Date.now();
+  if (untilDrop > 0 && untilDrop <= MUSIC_DROP_LEAD_MS) {
+    return 1 - untilDrop / MUSIC_DROP_LEAD_MS; // 0 au début du build-up -> 1 juste avant le drop
+  }
+  if (untilDrop <= 0 && untilDrop > -(MUSIC_DROP_STROBE_MS + 1500)) {
+    return 1; // pendant / juste après le drop lui-même
+  }
+  return 0;
+}
+
+// Tire un nouvel état d'effets auto, biaisé par la séquence en cours
+// (cf. currentDropSectionBoost) : plus intense/rapide à l'approche d'un drop
+// et pendant lui, plus calme sinon (couplet/normal), pour que la vitesse des
+// effets suive vraiment l'intensité du morceau plutôt qu'un simple hasard.
+function generateAutoLightEffects(room) {
+  const boost = currentDropSectionBoost(room);
+  return {
+    flash: { on: Math.random() < 0.7, color: pick(AUTO_LIGHT_COLORS) },
+    laser: {
+      on: Math.random() < 0.6 || boost > 0.5,
+      color: pick(AUTO_LIGHT_COLORS),
+      count: Math.min(8, 2 + Math.floor(Math.random() * 6) + Math.round(boost * 3)),
+      style: pick(validLaserStyles)
+    },
+    fireballs: {
+      on: Math.random() < 0.5 || boost > 0.6,
+      color: pick(AUTO_LIGHT_COLORS),
+      count: pick([2, 4, 6, 8])
+    },
+    sparks: {
+      on: Math.random() < 0.5 || boost > 0.4,
+      color: pick(AUTO_LIGHT_COLORS),
+      count: 4 + Math.floor(Math.random() * 6),
+      intensity: Math.min(1, 0.3 + Math.random() * 0.7 + boost * 0.3)
+    },
+    discoball: { on: Math.random() < 0.8, color: pick(AUTO_LIGHT_COLORS) },
+    smoke: { on: Math.random() < 0.35 || boost > 0.7, color: pick(AUTO_LIGHT_COLORS), count: 2 + Math.floor(Math.random() * 5) },
+    power: Math.min(1, 0.35 + Math.random() * 0.35 + boost * 0.4),
+    speed: Math.min(3, 0.55 + Math.random() * 0.8 + boost * 1.5),
+    autoMode: true
+  };
+}
+
 function scheduleAutoLightsTick(room, roomId) {
   room.autoLightsRunning = true;
   const delay = AUTO_LIGHTS_MIN_MS + Math.random() * (AUTO_LIGHTS_MAX_MS - AUTO_LIGHTS_MIN_MS);
@@ -840,31 +899,7 @@ function scheduleAutoLightsTick(room, roomId) {
       room.autoLightsRunning = false;
       return;
     }
-    room.lightEffects = {
-      flash: { on: Math.random() < 0.7, color: pick(AUTO_LIGHT_COLORS) },
-      laser: {
-        on: Math.random() < 0.6,
-        color: pick(AUTO_LIGHT_COLORS),
-        count: 2 + Math.floor(Math.random() * 6),
-        style: pick(validLaserStyles)
-      },
-      fireballs: {
-        on: Math.random() < 0.5,
-        color: pick(AUTO_LIGHT_COLORS),
-        count: pick([2, 4, 6, 8])
-      },
-      sparks: {
-        on: Math.random() < 0.5,
-        color: pick(AUTO_LIGHT_COLORS),
-        count: 4 + Math.floor(Math.random() * 6),
-        intensity: 0.3 + Math.random() * 0.7
-      },
-      discoball: { on: Math.random() < 0.8, color: pick(AUTO_LIGHT_COLORS) },
-      smoke: { on: Math.random() < 0.35, color: pick(AUTO_LIGHT_COLORS), count: 2 + Math.floor(Math.random() * 5) },
-      power: 0.4 + Math.random() * 0.6,
-      speed: 0.6 + Math.random() * 1.4,
-      autoMode: true
-    };
+    room.lightEffects = generateAutoLightEffects(room);
     io.to(roomId).emit('light-effects-changed', room.lightEffects);
     scheduleAutoLightsTick(room, roomId);
   }, delay);
@@ -1061,7 +1096,22 @@ function scheduleMusicDropTick(room, roomId) {
       return;
     }
     const dropAt = Date.now() + MUSIC_DROP_LEAD_MS;
+    room.nextDropAt = dropAt;
     io.to(roomId).emit('music-drop', { dropAt, durationMs: MUSIC_DROP_STROBE_MS, color: '#ffffff', intensity: STROBE_INTENSITY_MAX });
+    // Snapshot immédiat au tout début du build-up, puis un second pile au
+    // moment du drop : sans ça, le prochain rafraîchissement (aléatoire,
+    // 2,5 à 5s, cf. scheduleAutoLightsTick) pourrait tomber n'importe quand et
+    // manquer complètement le pic d'intensité attendu pile sur le drop.
+    if (room.lightEffects.autoMode) {
+      room.lightEffects = generateAutoLightEffects(room);
+      io.to(roomId).emit('light-effects-changed', room.lightEffects);
+      const dropBoostTimer = setTimeout(() => {
+        if (rooms.get(roomId) !== room || !room.round.active || !room.lightEffects.autoMode) return;
+        room.lightEffects = generateAutoLightEffects(room);
+        io.to(roomId).emit('light-effects-changed', room.lightEffects);
+      }, MUSIC_DROP_LEAD_MS);
+      room.round.timers.push(dropBoostTimer);
+    }
     scheduleMusicDropTick(room, roomId);
   }, delay);
   room.round.timers.push(timer);
@@ -1122,6 +1172,7 @@ function resetRoundState(room, roomId) {
   room.musicPulse = { bpm: null, anchorAt: null };
   room.autoLightsRunning = false;
   room.musicDropRunning = false;
+  room.nextDropAt = 0;
   for (const pid of Object.keys(room.players)) {
     const pl = room.players[pid];
     if (pl.effectTimer) { clearTimeout(pl.effectTimer); pl.effectTimer = null; }
